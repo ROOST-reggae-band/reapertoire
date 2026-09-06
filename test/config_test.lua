@@ -1,5 +1,6 @@
 local h = require("test.helpers")
 local config = require("lib.config")
+local json = require("lib.util.json")
 
 local T = {}
 
@@ -25,6 +26,18 @@ function T.merge_replaces_arrays_wholesale()
     config.defaults(), { tracks = { { match = "ONLY", slug = "x" } } })
   h.assert_eq(#merged.tracks, 1)
   h.assert_eq(merged.tracks[1].match, "ONLY")
+end
+
+function T.merge_clears_tracks_with_a_decoded_empty_array()
+  -- dkjson tags a decoded [] with __jsontype = 'array', distinguishing it from
+  -- an empty {} object. An empty array must genuinely clear the base list --
+  -- previously #override > 0 made the empty-array branch unreachable, so an
+  -- override meant to remove every track rule silently kept the base ones.
+  local base = config.merge(
+    config.defaults(), { tracks = { { match = "X", slug = "x" } } })
+  local override = json.decode('{"tracks":[]}')
+  local merged = config.merge(base, override)
+  h.assert_eq(#merged.tracks, 0)
 end
 
 function T.expand_path_expands_a_leading_tilde()

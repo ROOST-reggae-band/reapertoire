@@ -31,8 +31,16 @@ function M.defaults()
   }
 end
 
+-- dkjson tags every decoded table with a __jsontype of 'array' or 'object' in
+-- its metatable; trust that when present. A hand-built Lua table (as in
+-- M.defaults() or a test) carries no such tag, so fall back to the #t > 0
+-- heuristic — which cannot distinguish an empty array from an empty object,
+-- but nothing hand-built here needs that distinction.
 local function is_array(t)
-  return type(t) == "table" and (#t > 0 or next(t) == nil)
+  if type(t) ~= "table" then return false end
+  local mt = getmetatable(t)
+  if mt and mt.__jsontype then return mt.__jsontype == "array" end
+  return #t > 0
 end
 
 -- Recursive merge. Arrays are replaced wholesale, never merged element-wise:
@@ -42,7 +50,7 @@ function M.merge(base, override)
     if override == nil then return base end
     return override
   end
-  if is_array(override) and #override > 0 then return override end
+  if is_array(override) then return override end
 
   local out = {}
   for k, v in pairs(base) do out[k] = v end
