@@ -992,7 +992,7 @@ function M.takes(activity, covered_spans, sel_start, rate, opts)
         if not run_start then run_start = i end
       end
     end
-    close(i1)
+    close(gap_run > 0 and (i1 - gap_run) or i1)
   end
 
   local kept = {}
@@ -1224,7 +1224,7 @@ One file holds paths, thresholds, the track-to-slug mapping and the songs list. 
 
 ```bash
 mkdir -p lib/util
-curl -fsSL http://dkolf.de/dkjson-lua/dkjson.lua -o lib/util/json.lua
+curl -fsSL http://dkolf.de/dkjson-lua/dkjson-2.11.lua -o lib/util/json.lua
 head -5 lib/util/json.lua
 /opt/homebrew/opt/lua@5.4/bin/lua -e 'local j=dofile("lib/util/json.lua"); print(j.encode({a=1}))'
 ```
@@ -2193,3 +2193,19 @@ already verified by ear.
 - `git grep -inE '<private-band-name>|<private-server-name>' -- lib adapters scripts tools config test README.md` returns nothing. (Scoped to code so this plan's own reminder does not match itself.)
 
 Milestone 2 (region creation from a span list) starts from here.
+
+## Amendments after final review
+
+The Task 2–7 code blocks above are a historical record of what was planned
+and may differ from what shipped — the changes below were applied to the
+actual code and tests, not re-synced back into every code block in this
+document.
+
+- Task 5's `lib/detect.lua` reference code changed `close(i1)` to
+  `close(gap_run > 0 and (i1 - gap_run) or i1)` — the original absorbed a
+  span-final take's trailing silence into its reported stop time, asymmetric
+  with how leading silence was already excluded.
+- Task 7 Step 1's `curl` URL changed from `http://dkolf.de/dkjson-lua/dkjson.lua`
+  (404) to `http://dkolf.de/dkjson-lua/dkjson-2.11.lua` — the unversioned
+  filename is no longer served; see `task-7-report.md` for the deviation as
+  actually taken.
