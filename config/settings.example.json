@@ -1,0 +1,25 @@
+{
+  "sessionsRoot": "~/Music/RehearsalSessions",
+  "render": { "format": "opus", "bitrateKbps": 128, "stems": true },
+  "detection": {
+    "frameRateHz": 20,
+    "floorPercentile": 10,
+    "liveMarginDb": 12,
+    "liveMinFraction": 0.02,
+    "micWeight": 0.35,
+    "gapThresholdDb": 6,
+    "minGapSec": 4.0,
+    "minTakeSec": 30.0,
+    "padSec": 0.5,
+    "presenceMinFraction": 0.05,
+    "snapToMeasure": false
+  },
+  "tracks": [
+    { "match": "BASS DI", "slug": "bass", "isMic": false },
+    { "match": "DRUMS", "slug": "drums", "isMic": false },
+    { "match": "VOX", "slug": "vox-lead", "isMic": true }
+  ],
+  "songs": [
+    { "title": "Example Song", "aliases": ["example"] }
+  ]
+}

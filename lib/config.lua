@@ -1,0 +1,99 @@
+-- Loads config/settings.json, falling back to config/settings.example.json.
+--
+-- The `tracks` array does double duty on purpose: the same entry supplies the
+-- instrument slug for stem naming and the isMic flag that suppresses between-
+-- take chatter in gap detection. Both answer one question — what is this
+-- track, musically — so splitting them would mean maintaining the lineup twice.
+
+local json = require("lib.util.json")
+
+local M = {}
+
+function M.defaults()
+  return {
+    sessionsRoot = "~/Music/RehearsalSessions",
+    render = { format = "opus", bitrateKbps = 128, stems = true },
+    detection = {
+      frameRateHz = 20,
+      floorPercentile = 10,
+      liveMarginDb = 12,
+      liveMinFraction = 0.02,
+      micWeight = 0.35,
+      gapThresholdDb = 6,
+      minGapSec = 4.0,
+      minTakeSec = 30.0,
+      padSec = 0.5,
+      presenceMinFraction = 0.05,
+      snapToMeasure = false,
+    },
+    tracks = {},
+    songs = {},
+  }
+end
+
+local function is_array(t)
+  return type(t) == "table" and (#t > 0 or next(t) == nil)
+end
+
+-- Recursive merge. Arrays are replaced wholesale, never merged element-wise:
+-- merging them would make removing a track rule impossible.
+function M.merge(base, override)
+  if type(override) ~= "table" then
+    if override == nil then return base end
+    return override
+  end
+  if is_array(override) and #override > 0 then return override end
+
+  local out = {}
+  for k, v in pairs(base) do out[k] = v end
+  for k, v in pairs(override) do
+    if type(v) == "table" and type(base[k]) == "table" then
+      out[k] = M.merge(base[k], v)
+    else
+      out[k] = v
+    end
+  end
+  return out
+end
+
+function M.expand_path(path, home)
+  home = home or os.getenv("HOME") or ""
+  local rest = path:match("^~/(.*)$")
+  if rest then return home .. "/" .. rest end
+  return path
+end
+
+-- Exact name match first, then substring, both case-insensitive, in rule order.
+-- A fuzzy pass is deliberately absent here: it needs operator confirmation,
+-- which belongs in the panel (milestone 3), not in a silent loader.
+function M.match_track(name, rules)
+  local lowered = name:lower()
+  for _, rule in ipairs(rules) do
+    if lowered == rule.match:lower() then return rule end
+  end
+  for _, rule in ipairs(rules) do
+    if lowered:find(rule.match:lower(), 1, true) then return rule end
+  end
+  return nil
+end
+
+-- read_file(path) -> string|nil, injected so this is testable without disk.
+-- Returns the merged config and whether it fell back to the example.
+function M.load(dir, read_file)
+  local settings = read_file(dir .. "/config/settings.json")
+  local used_example = false
+  if not settings then
+    settings = read_file(dir .. "/config/settings.example.json")
+    used_example = true
+  end
+  if not settings then
+    error("no config found in " .. dir .. "/config/")
+  end
+  local parsed, _, err = json.decode(settings)
+  if not parsed then
+    error("config is not valid JSON: " .. tostring(err))
+  end
+  return M.merge(M.defaults(), parsed), used_example
+end
+
+return M

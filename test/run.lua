@@ -6,6 +6,7 @@ local SUITES = {
   "test.liveness_test",
   "test.detect_test",
   "test.presence_test",
+  "test.config_test",
 }
 
 local passed, failed = 0, 0
