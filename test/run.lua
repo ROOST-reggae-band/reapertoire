@@ -9,6 +9,7 @@ local SUITES = {
   "test.config_test",
   "test.pipeline_test",
   "test.peaks_test",
+  "test.report_test",
 }
 
 local passed, failed = 0, 0
