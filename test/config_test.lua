@@ -81,4 +81,50 @@ function T.load_prefers_settings_over_the_example()
   h.assert_eq(cfg.sessionsRoot, "/from/settings")
 end
 
+function T.load_errors_when_no_config_file_is_found()
+  local function fake_read(_) return nil end
+  local ok, err = pcall(config.load, "/repo", fake_read)
+  h.assert_eq(ok, false)
+  if not tostring(err):match("no config found") then
+    error("expected a 'no config found' error, got: " .. tostring(err))
+  end
+end
+
+function T.load_errors_on_invalid_json()
+  local function fake_read(path)
+    if path:match("example") then return nil end
+    return "{ not json"
+  end
+  local ok, err = pcall(config.load, "/repo", fake_read)
+  h.assert_eq(ok, false)
+  if not tostring(err):match("not valid JSON") then
+    error("expected a 'not valid JSON' error, got: " .. tostring(err))
+  end
+end
+
+function T.validate_rejects_a_missing_detection_key()
+  local cfg = config.defaults()
+  cfg.detection.minGapSec = nil
+  local ok, err = pcall(config.validate, cfg)
+  h.assert_eq(ok, false)
+  if not tostring(err):match("minGapSec") then
+    error("expected error naming minGapSec, got: " .. tostring(err))
+  end
+end
+
+function T.validate_rejects_a_track_rule_missing_match()
+  local cfg = config.defaults()
+  cfg.tracks = { { slug = "bass" } }
+  local ok, err = pcall(config.validate, cfg)
+  h.assert_eq(ok, false)
+  if not tostring(err):match("tracks%[1%]") then
+    error("expected error naming tracks[1], got: " .. tostring(err))
+  end
+end
+
+function T.validate_accepts_the_defaults()
+  local ok = pcall(config.validate, config.defaults())
+  h.assert_eq(ok, true)
+end
+
 return T

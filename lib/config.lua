@@ -56,6 +56,32 @@ function M.merge(base, override)
   return out
 end
 
+-- Guards against the raw Lua tracebacks that a hand-edited config produces
+-- deep inside liveness.classify or match_track — errors an operator has no
+-- context for. Not a schema library: just enough to name the bad key or
+-- track index and point at the file to fix.
+function M.validate(cfg)
+  local where = "check config/settings.json"
+  for key in pairs(M.defaults().detection) do
+    local v = cfg.detection and cfg.detection[key]
+    if key == "snapToMeasure" then
+      if type(v) ~= "boolean" then
+        error(string.format("detection.%s must be true/false (%s)", key, where))
+      end
+    elseif type(v) ~= "number" then
+      error(string.format("detection.%s is missing or not a number (%s)", key, where))
+    end
+  end
+  for i, rule in ipairs(cfg.tracks or {}) do
+    if type(rule.match) ~= "string" then
+      error(string.format("tracks[%d] is missing a string 'match' (%s)", i, where))
+    end
+    if type(rule.slug) ~= "string" then
+      error(string.format("tracks[%d] is missing a string 'slug' (%s)", i, where))
+    end
+  end
+end
+
 function M.expand_path(path, home)
   home = home or os.getenv("HOME") or ""
   local rest = path:match("^~/(.*)$")
@@ -93,7 +119,9 @@ function M.load(dir, read_file)
   if not parsed then
     error("config is not valid JSON: " .. tostring(err))
   end
-  return M.merge(M.defaults(), parsed), used_example
+  local cfg = M.merge(M.defaults(), parsed)
+  M.validate(cfg)
+  return cfg, used_example
 end
 
 return M
