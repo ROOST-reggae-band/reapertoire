@@ -16,6 +16,12 @@ local M = {}
 -- Returns a dense array of dB-above-floor numbers, or `false` where no live
 -- track has media.
 function M.activity(tracks, opts, n_frames)
+  for _, track in ipairs(tracks) do
+    assert(#track.frames == n_frames, string.format(
+      "track %s has %d frames, expected %d — the frame array must span the whole selection",
+      track.name or "?", #track.frames, n_frames))
+  end
+
   local out = {}
   for i = 1, n_frames do
     local best = false
