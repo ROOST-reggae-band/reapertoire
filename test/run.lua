@@ -4,6 +4,7 @@ local SUITES = {
   "test.timeline_test",
   "test.frames_test",
   "test.liveness_test",
+  "test.detect_test",
 }
 
 local passed, failed = 0, 0
