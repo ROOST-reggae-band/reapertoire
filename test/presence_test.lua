@@ -80,4 +80,22 @@ function T.frames_with_no_media_do_not_count_against_presence()
   h.assert_eq(got[1], "gtr")
 end
 
+function T.a_take_never_counts_the_next_takes_first_frame()
+  -- Regression: index_of(span.stop) is the frame that STARTS at span.stop --
+  -- the first frame of the NEXT take. Counting it credited a track with signal
+  -- it never played in this take. The other tests miss this because each sizes
+  -- its frames array to end at the take boundary, so the phantom index is out
+  -- of bounds; a real analysis array spans the whole selection.
+  -- presence_min_fraction = 0 makes a single leaked frame decisive.
+  local frames = {}
+  for i = 1, 200 do frames[i] = (i <= 20) and -60 or -20 end
+  local tracks = {
+    { name = "SAX", slug = "sax", live = true, floor_db = -60, frames = frames },
+  }
+  local got = presence.instruments_in(
+    tracks, { start = 0, stop = 1.0 }, 0, RATE,
+    { live_margin_db = 12, presence_min_fraction = 0 })
+  h.assert_eq(#got, 0, "instrument credited from the next take's audio")
+end
+
 return T

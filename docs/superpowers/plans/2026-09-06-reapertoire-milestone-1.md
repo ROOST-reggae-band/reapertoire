@@ -1161,7 +1161,7 @@ local M = {}
 -- Returns slugs (or track names where unmapped), in track order.
 function M.instruments_in(tracks, span, sel_start, rate, opts)
   local i0 = frames_util.index_of(span.start, sel_start, rate)
-  local i1 = frames_util.index_of(span.stop, sel_start, rate)
+  local i1 = frames_util.index_of(span.stop, sel_start, rate) - 1
 
   local out = {}
   for _, track in ipairs(tracks) do
