@@ -126,6 +126,28 @@ function T.a_take_never_spans_a_hard_cut()
   h.assert_eq(takes[2].span_index, 2)
 end
 
+function T.a_span_never_borrows_the_next_spans_first_frame()
+  -- Regression: index_of(span.stop) is the frame that STARTS at span.stop --
+  -- the first frame of the NEXT span. Walking it inside this span let a phantom
+  -- take be attributed to span 1 from audio belonging to span 2. Setting
+  -- min_take_sec and pad_sec to 0 strips the two mechanisms (the padding clamp
+  -- and the short-take filter) that otherwise mask the leak.
+  local total = 130 * RATE
+  local tracks = { {
+    frames = track_frames(total, -60, -20, { { 0, 50 }, { 60, 130 } }),
+    floor_db = -60, live = true, is_mic = false,
+  } }
+  local activity = detect.activity(tracks, OPTS, total)
+  local spans = { { start = 0, stop = 60 }, { start = 60, stop = 130 } }
+  local takes = detect.takes(activity, spans, 0, RATE, {
+    gap_threshold_db = 6, min_gap_sec = 4.0, min_take_sec = 0, pad_sec = 0,
+  })
+  h.assert_eq(#takes, 2, "take count")
+  h.assert_near(takes[1].stop, 50, 0.1)
+  h.assert_eq(takes[2].span_index, 2)
+  h.assert_near(takes[2].start, 60, 0.1)
+end
+
 function T.padding_is_clamped_to_the_covered_span()
   -- A take filling its span must not be padded past the item edge.
   local total = 60 * RATE

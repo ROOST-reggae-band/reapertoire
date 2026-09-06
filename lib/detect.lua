@@ -47,7 +47,7 @@ function M.takes(activity, covered_spans, sel_start, rate, opts)
     local i0 = math.max(1, frames_util.index_of(span.start, sel_start, rate))
     -- Clamp: a span ending exactly at the selection edge indexes one frame past
     -- the array, and comparing nil against a threshold is a hard error.
-    local i1 = math.min(#activity, frames_util.index_of(span.stop, sel_start, rate))
+    local i1 = math.min(#activity, frames_util.index_of(span.stop, sel_start, rate) - 1)
     local run_start, gap_run = nil, 0
 
     local function close(last_active_frame)
