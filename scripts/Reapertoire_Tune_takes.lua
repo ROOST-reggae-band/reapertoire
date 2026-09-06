@@ -213,6 +213,7 @@ local function save_thresholds()
     gapThresholdDb = detection.gapThresholdDb,
     minGapSec = detection.minGapSec,
     minTakeSec = detection.minTakeSec,
+    minLevelDb = detection.minLevelDb,
   }) do
     local pattern = '("' .. key .. '"%s*:%s*)[%-%d%.eE+]+'
     local replaced
@@ -289,6 +290,9 @@ local function frame()
 
     c, v = ImGui.SliderDouble(ctx, "minTakeSec", detection.minTakeSec, 0, 120, "%.0f")
     if c then detection.minTakeSec = v; changed = true end
+
+    c, v = ImGui.SliderDouble(ctx, "minLevelDb", detection.minLevelDb, -140, -20, "%.0f dBFS")
+    if c then detection.minLevelDb = v; changed = true end
 
     if changed then redetect() end
 

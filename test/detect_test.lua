@@ -216,4 +216,56 @@ function T.span_index_is_reported_for_every_take()
   h.assert_eq(takes[2].span_index, 2)
 end
 
+function T.an_absolute_gate_silences_frames_below_it()
+  -- The per-track floor adapts to gain staging, but on a quiet interface it
+  -- settles on converter noise, leaving room tone above floor+threshold. The
+  -- gate is an absolute dBFS backstop against exactly that.
+  local tracks = {
+    { frames = { -55, -20 }, floor_db = -84, live = true, is_mic = false },
+  }
+  local ungated = detect.activity(tracks, OPTS, 2)
+  h.assert_near(ungated[1], 29)   -- -55 sits 29 dB over a -84 floor
+  h.assert_near(ungated[2], 64)
+
+  local gated_opts = {}
+  for k, v in pairs(OPTS) do gated_opts[k] = v end
+  gated_opts.min_level_db = -50
+  local gated = detect.activity(tracks, gated_opts, 2)
+  h.assert_near(gated[1], 0, 1e-9, "below the gate reads as at-floor")
+  h.assert_near(gated[2], 64, 1e-9, "above the gate is untouched")
+end
+
+function T.the_gate_does_not_turn_absent_frames_into_silence()
+  -- `false` means no media and must stay distinguishable from a quiet room.
+  local tracks = {
+    { frames = { false, -55 }, floor_db = -84, live = true, is_mic = false },
+  }
+  local opts = {}
+  for k, v in pairs(OPTS) do opts[k] = v end
+  opts.min_level_db = -50
+  local a = detect.activity(tracks, opts, 2)
+  h.assert_eq(a[1], false)
+  h.assert_near(a[2], 0)
+end
+
+function T.a_gate_can_split_a_take_that_room_tone_would_have_joined()
+  -- Room tone at -55 over a -84 floor clears gapThresholdDb of 6, so without
+  -- a gate the two run-throughs merge into one.
+  local total = 200 * RATE
+  local frames = track_frames(total, -55, -20, { { 0, 60 }, { 140, 200 } })
+  local tracks = { { frames = frames, floor_db = -84, live = true, is_mic = false } }
+  local spans = { { start = 0, stop = 200 } }
+
+  local ungated = detect.takes(
+    detect.activity(tracks, OPTS, total), spans, 0, RATE, OPTS)
+  h.assert_eq(#ungated, 1, "room tone joins them without a gate")
+
+  local opts = {}
+  for k, v in pairs(OPTS) do opts[k] = v end
+  opts.min_level_db = -50
+  local gated = detect.takes(
+    detect.activity(tracks, opts, total), spans, 0, RATE, opts)
+  h.assert_eq(#gated, 2, "the gate separates them")
+end
+
 return T

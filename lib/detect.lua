@@ -29,8 +29,18 @@ function M.activity(tracks, opts, n_frames)
       if track.live then
         local v = track.frames[i]
         if v ~= false and v ~= nil then
-          local above = v - track.floor_db
-          if track.is_mic then above = above * opts.mic_weight end
+          local above
+          if opts.min_level_db and v < opts.min_level_db then
+            -- An absolute gate, in dBFS. The per-track floor adapts to gain
+            -- staging, which is what makes it robust -- but on a quiet
+            -- interface it can settle on the converter's own noise, leaving
+            -- room tone looking like signal. Anything under this is silence
+            -- no matter what the floor says.
+            above = 0
+          else
+            above = v - track.floor_db
+            if track.is_mic then above = above * opts.mic_weight end
+          end
           if best == false or above > best then best = above end
         end
       end

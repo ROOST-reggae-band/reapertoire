@@ -26,7 +26,8 @@ function M.instruments_in(tracks, span, sel_start, rate, opts)
         local v = track.frames[i]
         if v ~= false and v ~= nil then
           total = total + 1
-          if v > threshold then active = active + 1 end
+          local gated = opts.min_level_db and v < opts.min_level_db
+        if v > threshold and not gated then active = active + 1 end
         end
       end
       if total > 0 and active / total > opts.presence_min_fraction then

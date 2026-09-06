@@ -30,6 +30,7 @@ function M.detection_opts(d)
     pad_sec = d.padSec,
     presence_min_fraction = d.presenceMinFraction,
     merge_gap_sec = d.mergeGapSec,
+    min_level_db = d.minLevelDb,
     snap_to_measure = d.snapToMeasure,
   }
 end

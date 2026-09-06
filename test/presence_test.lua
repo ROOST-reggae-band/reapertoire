@@ -98,4 +98,23 @@ function T.a_take_never_counts_the_next_takes_first_frame()
   h.assert_eq(#got, 0, "instrument credited from the next take's audio")
 end
 
+function T.the_gate_keeps_room_tone_from_counting_as_an_instrument()
+  -- A track sitting at -55 all take long is 29 dB over a -84 floor and would
+  -- otherwise be reported present throughout.
+  local tracks = {
+    { name = "ORGAN", slug = "organ", live = true, floor_db = -84,
+      frames = frames_at(100 * RATE, -55, -55, {}) },
+  }
+  local ungated = presence.instruments_in(
+    tracks, { start = 0, stop = 100 }, 0, RATE, OPTS)
+  h.assert_eq(#ungated, 1, "reported present without a gate")
+
+  local opts = { live_margin_db = OPTS.live_margin_db,
+                 presence_min_fraction = OPTS.presence_min_fraction,
+                 min_level_db = -50 }
+  local gated = presence.instruments_in(
+    tracks, { start = 0, stop = 100 }, 0, RATE, opts)
+  h.assert_eq(#gated, 0, "gated out")
+end
+
 return T

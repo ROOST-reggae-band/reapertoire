@@ -17,7 +17,8 @@
     "padSec": 0.5,
     "presenceMinFraction": 0.05,
     "mergeGapSec": 0.05,
-    "snapToMeasure": false
+    "snapToMeasure": false,
+    "minLevelDb": -140
   },
   "tracks": [
     {
