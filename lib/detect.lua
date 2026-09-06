@@ -72,7 +72,7 @@ function M.takes(activity, covered_spans, sel_start, rate, opts)
         if not run_start then run_start = i end
       end
     end
-    close(i1)
+    close(gap_run > 0 and (i1 - gap_run) or i1)
   end
 
   local kept = {}

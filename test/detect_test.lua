@@ -173,6 +173,35 @@ function T.an_empty_span_yields_no_takes()
   h.assert_eq(#takes, 0)
 end
 
+function T.a_span_final_take_does_not_absorb_its_trailing_silence()
+  -- Leading silence is excluded because run_start is only set on an active
+  -- frame; trailing silence must be excluded symmetrically. Otherwise a take
+  -- ending before its span edge reports the span edge as its stop, and the
+  -- padding runs from the wrong place.
+  local total = 130 * RATE
+  local tracks = { {
+    frames = track_frames(total, -60, -20, { { 0, 127 } }),
+    floor_db = -60, live = true, is_mic = false,
+  } }
+  local activity = detect.activity(tracks, OPTS, total)
+  local takes = detect.takes(activity, { { start = 0, stop = 130 } }, 0, RATE, OPTS)
+  h.assert_eq(#takes, 1, "take count")
+  h.assert_near(takes[1].stop, 127.5, 0.1)
+end
+
+function T.trailing_silence_does_not_rescue_a_take_under_the_minimum()
+  -- 28 s of noodling then 3 s of silence to the span edge. Counting the silence
+  -- made it a 31 s take, defeating the min_take_sec filter at every span edge.
+  local total = 31 * RATE
+  local tracks = { {
+    frames = track_frames(total, -60, -20, { { 0, 28 } }),
+    floor_db = -60, live = true, is_mic = false,
+  } }
+  local activity = detect.activity(tracks, OPTS, total)
+  local takes = detect.takes(activity, { { start = 0, stop = 31 } }, 0, RATE, OPTS)
+  h.assert_eq(#takes, 0, "take count")
+end
+
 function T.span_index_is_reported_for_every_take()
   local total = 200 * RATE
   local tracks = { {
