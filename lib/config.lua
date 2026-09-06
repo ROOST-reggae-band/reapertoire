@@ -19,7 +19,7 @@ function M.defaults()
       liveMarginDb = 12,
       liveMinFraction = 0.02,
       micWeight = 0.35,
-      gapThresholdDb = 6,
+      gapThresholdDb = 30,
       minGapSec = 4.0,
       minTakeSec = 30.0,
       padSec = 0.5,

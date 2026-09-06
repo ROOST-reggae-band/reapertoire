@@ -8,6 +8,7 @@ local SUITES = {
   "test.presence_test",
   "test.config_test",
   "test.pipeline_test",
+  "test.fixtures_test",
   "test.peaks_test",
   "test.report_test",
 }
