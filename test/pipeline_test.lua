@@ -17,19 +17,46 @@ local function frames_of(total, quiet, loud, loud_ranges, absent_ranges)
   return f
 end
 
-function T.every_detection_config_key_is_mapped()
-  -- The point of this test: adding a config key without adding its mapping
-  -- would otherwise surface as a nil threshold deep inside an analysis stage.
+function T.every_detection_config_key_maps_to_its_snake_case_option()
+  -- Counting keys is not enough. Two mappings whose source fields are swapped
+  -- keep the count equal and both values non-nil, so swapping liveMarginDb and
+  -- liveMinFraction would pass unnoticed -- and would give every track a
+  -- 0.02 dB threshold plus an impossible 12.0 activity requirement, silently
+  -- classifying the whole band as absent. Derive the expected name and compare
+  -- values instead.
+  --
+  -- Residual gap, accepted: a swap between two keys that share a default value
+  -- (presenceMinFraction and mergeGapSec are both 0.05) still passes.
+  local function snake(s)
+    return (s:gsub("(%u)", function(c) return "_" .. c:lower() end))
+  end
   local d = config.defaults().detection
   local opts = pipeline.detection_opts(d)
+  local declared = 0
+  for k, v in pairs(d) do
+    declared = declared + 1
+    local name = snake(k)
+    if opts[name] == nil then
+      error(string.format("config key %s has no option named %s", k, name))
+    end
+    h.assert_eq(opts[name], v, "option " .. name)
+  end
   local mapped = 0
   for _ in pairs(opts) do mapped = mapped + 1 end
-  local declared = 0
-  for _ in pairs(d) do declared = declared + 1 end
-  h.assert_eq(mapped, declared, "mapped option count vs declared config keys")
-  for k, v in pairs(opts) do
-    if v == nil then error("option " .. k .. " mapped to nil") end
-  end
+  h.assert_eq(mapped, declared, "options beyond the declared config keys")
+end
+
+function T.analyze_does_not_mutate_the_caller_s_tracks()
+  local d = config.defaults().detection
+  local total = 20 * RATE
+  local input_track = { name = "BASS DI", slug = "bass", is_mic = false,
+                        frames = frames_of(total, -60, -20, {{0,10}}, {}) }
+  pipeline.analyze({
+    tracks = { input_track }, items = { { start = 0, stop = 20 } },
+    sel_start = 0, sel_stop = 20, detection = d,
+  })
+  h.assert_eq(input_track.live, nil, "caller's track gained a live field")
+  h.assert_eq(input_track.floor_db, nil, "caller's track gained a floor_db field")
 end
 
 function T.analyze_finds_takes_across_a_hard_cut()
