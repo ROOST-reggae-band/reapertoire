@@ -110,8 +110,59 @@ local function redetect()
   recheck_clashes()
 end
 
+-- Re-reads peaks for whatever the time selection now is. This is the expensive
+-- path, so it is only reached once the selection has stopped moving.
+local function reload()
+  local s, e = adapter.time_selection()
+  if not s then return false end
+  sel_start, sel_stop = s, e
+  input.sel_start, input.sel_stop = s, e
+  collect()
+  redetect()
+  return true
+end
+
 collect()
 redetect()
+
+-- Following the time selection: poll it each frame, but wait for it to settle
+-- before re-reading peaks. Reloading mid-drag would stall the panel on every
+-- mouse move, and a long selection takes seconds to read.
+local SETTLE_SEC = 0.4
+local pending, pending_since = nil, 0
+local reload_next_frame = false
+local no_selection = false
+
+local function poll_selection()
+  local cur_start, cur_stop = adapter.time_selection()
+  if not cur_start then
+    no_selection = true
+    pending = nil
+    return
+  end
+  no_selection = false
+
+  local same_as_loaded =
+    math.abs(cur_start - sel_start) < 1e-6 and math.abs(cur_stop - sel_stop) < 1e-6
+  if same_as_loaded then
+    pending = nil
+    return
+  end
+
+  local same_as_pending = pending
+    and math.abs(cur_start - pending.start) < 1e-6
+    and math.abs(cur_stop - pending.stop) < 1e-6
+
+  if not same_as_pending then
+    pending = { start = cur_start, stop = cur_stop }
+    pending_since = reaper.time_precise()
+  elseif reaper.time_precise() - pending_since >= SETTLE_SEC then
+    pending = nil
+    -- Draw the notice this frame, reload at the start of the next one, so the
+    -- panel does not appear frozen during the read.
+    reload_next_frame = true
+  end
+end
 
 -- ------------------------------------------------------------------ helpers
 
@@ -192,6 +243,13 @@ end
 local ctx = ImGui.CreateContext("Reapertoire")
 
 local function frame()
+  if reload_next_frame then
+    reload_next_frame = false
+    reload()
+    status = ""
+  end
+  poll_selection()
+
   local visible, open = ImGui.Begin(ctx, "Reapertoire - tune takes", true)
   if visible then
     local live = live_tracks()
@@ -204,6 +262,14 @@ local function frame()
       names[#names + 1] = string.format("%s %.0f", t.name, t.floor_db or 0)
     end
     ImGui.Text(ctx, table.concat(names, "   "))
+
+    if reload_next_frame then
+      ImGui.Text(ctx, "Selection changed - re-reading peaks...")
+    elseif pending then
+      ImGui.Text(ctx, "Selection changing...")
+    elseif no_selection then
+      ImGui.Text(ctx, "No time selection - showing the last range analysed")
+    end
 
     ImGui.Separator(ctx)
 
@@ -265,6 +331,10 @@ local function frame()
     end
     ImGui.SameLine(ctx)
     if ImGui.Button(ctx, "Save thresholds") then save_thresholds() end
+    ImGui.SameLine(ctx)
+    if ImGui.Button(ctx, "Reload selection") then
+      if reload() then status = "Reloaded" else status = "No time selection" end
+    end
 
     if status ~= "" then ImGui.Text(ctx, status) end
 
