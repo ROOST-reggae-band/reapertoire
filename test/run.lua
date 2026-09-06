@@ -2,6 +2,7 @@ package.path = "./?.lua;./?/init.lua;" .. package.path
 
 local SUITES = {
   "test.timeline_test",
+  "test.frames_test",
 }
 
 local passed, failed = 0, 0
