@@ -59,7 +59,13 @@ for _, track in ipairs(tracks) do
     -- the file to a size worth committing.
     local rounded = {}
     for i, v in ipairs(track.frames) do
-      rounded[i] = (v == false) and false or math.floor(v * 10 + 0.5) / 10
+      -- Written long-hand on purpose: `(v == false) and false or expr` always
+      -- evaluates expr, because Lua's and/or idiom cannot carry a false value.
+      if v == false then
+        rounded[i] = false
+      else
+        rounded[i] = math.floor(v * 10 + 0.5) / 10
+      end
     end
     kept[#kept + 1] = {
       name = track.name,
