@@ -96,4 +96,74 @@ function T.a_frame_array_not_spanning_the_selection_is_rejected()
   end
 end
 
+function T.classify_then_detect_matches_a_single_analyze_call()
+  -- The tuner classifies once and re-runs detect per slider move; that path
+  -- must give exactly what the one-shot path gives.
+  local d = config.defaults().detection
+  local total = 200 * RATE
+  local function build()
+    return { { name = "BASS DI", slug = "bass", is_mic = false,
+               frames = frames_of(total, -60, -20, {{0,50},{100,180}}, {{60,100}}) } }
+  end
+  local input = { tracks = build(), items = { { start = 0, stop = 60 }, { start = 100, stop = 200 } },
+                  sel_start = 0, sel_stop = 200, detection = d }
+  local one_shot = pipeline.analyze(input)
+
+  local split_input = { tracks = build(), items = input.items,
+                        sel_start = 0, sel_stop = 200, detection = d }
+  local classified = pipeline.classify(split_input)
+  local detected = pipeline.detect(classified, split_input)
+
+  h.assert_eq(#detected.takes, #one_shot.takes, "take count")
+  for i, take in ipairs(detected.takes) do
+    h.assert_near(take.start, one_shot.takes[i].start, 1e-9)
+    h.assert_near(take.stop, one_shot.takes[i].stop, 1e-9)
+  end
+end
+
+function T.detect_can_be_re_run_with_new_thresholds_without_reclassifying()
+  local d = config.defaults().detection
+  local total = 200 * RATE
+  local input = {
+    tracks = { { name = "BASS DI", slug = "bass", is_mic = false,
+                 frames = frames_of(total, -60, -20, {{0,50},{100,180}}, {{60,100}}) } },
+    items = { { start = 0, stop = 60 }, { start = 100, stop = 200 } },
+    sel_start = 0, sel_stop = 200, detection = d,
+  }
+  local classified = pipeline.classify(input)
+  local before = pipeline.detect(classified, input)
+
+  -- A minTakeSec above every take's length must empty the result, using the
+  -- same classification.
+  local raised = {}
+  for k, v in pairs(d) do raised[k] = v end
+  raised.minTakeSec = 10000
+  input.detection = raised
+  local after = pipeline.detect(classified, input)
+
+  assert(#before.takes > 0, "expected takes before raising the threshold")
+  h.assert_eq(#after.takes, 0, "takes after raising minTakeSec")
+end
+
+function T.detect_refuses_a_frame_rate_that_invalidates_the_classification()
+  local d = config.defaults().detection
+  local total = 200 * RATE
+  local input = {
+    tracks = { { name = "BASS DI", slug = "bass", is_mic = false,
+                 frames = frames_of(total, -60, -20, {{0,50}}, {}) } },
+    items = { { start = 0, stop = 200 } },
+    sel_start = 0, sel_stop = 200, detection = d,
+  }
+  local classified = pipeline.classify(input)
+  local changed = {}
+  for k, v in pairs(d) do changed[k] = v end
+  changed.frameRateHz = 40
+  input.detection = changed
+  local ok, err = pcall(pipeline.detect, classified, input)
+  h.assert_eq(ok, false, "expected an error")
+  if not tostring(err):find("re%-run classify") then
+    error("wrong error: " .. tostring(err))
+  end
+end
+
 return T

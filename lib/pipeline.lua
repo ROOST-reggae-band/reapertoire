@@ -35,11 +35,17 @@ function M.detection_opts(d)
 end
 
 -- input = { tracks, items, sel_start, sel_stop, detection }
-function M.analyze(input)
+--
+-- Split into two halves on purpose. `classify` sorts every track's frames to
+-- find its noise floor, which is the expensive part; `detect` only walks them.
+-- An interactive tuner classifies once and re-runs detect on every slider move,
+-- so the split is what makes live feedback possible.
+
+-- Returns { tracks = <classified copies>, n_frames }. Tracks gain live,
+-- floor_db, active_fraction and media_frames.
+function M.classify(input)
   local opts = M.detection_opts(input.detection)
-  local rate = opts.frame_rate_hz
-  local sel_start, sel_stop = input.sel_start, input.sel_stop
-  local n_frames = frames_util.count(sel_start, sel_stop, rate)
+  local n_frames = frames_util.count(input.sel_start, input.sel_stop, opts.frame_rate_hz)
 
   -- Classified tracks are shallow copies, so a caller's own list is never
   -- modified behind its back and a mid-loop assertion cannot leave it half
@@ -60,22 +66,43 @@ function M.analyze(input)
     tracks[i] = copy
   end
 
-  local covered_spans = timeline.covered_spans(
-    input.items, sel_start, sel_stop, opts.merge_gap_sec)
+  return { tracks = tracks, n_frames = n_frames }
+end
 
-  local activity = detect.activity(tracks, opts, n_frames)
-  local takes = detect.takes(activity, covered_spans, sel_start, rate, opts)
+-- Cheap half: spans, takes and per-take instruments, from an already
+-- classified set. Safe to call repeatedly with different detection options.
+function M.detect(classified, input)
+  local opts = M.detection_opts(input.detection)
+  local rate = opts.frame_rate_hz
+
+  -- Noise floors were measured at a particular frame rate; changing it would
+  -- silently invalidate them and the cached frame arrays with them.
+  assert(frames_util.count(input.sel_start, input.sel_stop, rate) == classified.n_frames,
+    "frameRateHz changed since classify -- re-run classify before detect")
+
+  local covered_spans = timeline.covered_spans(
+    input.items, input.sel_start, input.sel_stop, opts.merge_gap_sec)
+
+  local activity = detect.activity(classified.tracks, opts, classified.n_frames)
+  local takes = detect.takes(activity, covered_spans, input.sel_start, rate, opts)
 
   for _, take in ipairs(takes) do
     take.instruments = presence.instruments_in(
-      tracks, take, sel_start, rate, opts)
+      classified.tracks, take, input.sel_start, rate, opts)
   end
 
+  return { covered_spans = covered_spans, takes = takes }
+end
+
+-- The whole pipeline, for callers that run it once.
+function M.analyze(input)
+  local classified = M.classify(input)
+  local detected = M.detect(classified, input)
   return {
-    tracks = tracks,
-    covered_spans = covered_spans,
-    takes = takes,
-    n_frames = n_frames,
+    tracks = classified.tracks,
+    covered_spans = detected.covered_spans,
+    takes = detected.takes,
+    n_frames = classified.n_frames,
   }
 end
 
