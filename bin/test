@@ -1,0 +1,11 @@
+#!/bin/sh
+# Runs the pure-Lua test suite on the same Lua version REAPER embeds.
+set -e
+cd "$(dirname "$0")/.." || exit 1
+LUA="${LUA:-/opt/homebrew/opt/lua@5.4/bin/lua}"
+if [ ! -x "$LUA" ]; then
+  echo "lua@5.4 not found at $LUA — run: brew install lua@5.4" >&2
+  echo "(falling back to whatever 'lua' is on PATH; version drift is on you)" >&2
+  LUA=lua
+fi
+exec "$LUA" test/run.lua "$@"
