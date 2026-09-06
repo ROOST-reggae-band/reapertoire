@@ -1498,7 +1498,7 @@ The only file that touches the `reaper` global. It turns the current project and
 
 - [ ] **Step 1: Implement the adapter**
 
-Write this against the behaviour recorded in `docs/notes/reascript-findings.md`. The `starttime` argument below assumes it is **source time**, which is why `D_STARTOFFS` is added. If Task 1 observed item-relative time, change the marked line to pass `0` and record the correction in the findings file.
+Write this against the behaviour recorded in `docs/notes/reascript-findings.md`, which is now populated from a real probe run. The open question that block carried has been settled: `starttime` is **project time**, so the absolute item position is passed directly and `D_STARTOFFS` plays no part.
 
 ```lua
 -- adapters/reaper_api.lua
@@ -1547,15 +1547,21 @@ local function read_take_peaks(take, item_start, item_stop, sel_start, rate, fra
   local channels = reaper.GetMediaSourceNumChannels(source)
   if channels < 1 then return end
 
-  local start_offs = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
   local n = math.max(1, frames_util.count(item_start, item_stop, rate))
 
   local buf = reaper.new_array(channels * n * 2)
   buf.clear()
 
-  -- Marked line: source time. See docs/notes/reascript-findings.md.
+  -- `starttime` is PROJECT time -- verified empirically, see
+  -- docs/notes/reascript-findings.md. Not source time, so D_STARTOFFS is not
+  -- added; D_PLAYRATE needs no compensation either, because a project-time
+  -- read already reflects the take as placed on the timeline.
+  --
+  -- Reading outside this item's extent returns a full buffer of zeros with no
+  -- error, indistinguishable from a silent room. That is why the caller clamps
+  -- to item bounds and leaves every other frame `false`.
   local retval = reaper.GetMediaItemTake_Peaks(
-    take, rate, start_offs, channels, n, 0, buf)
+    take, rate, item_start, channels, n, 0, buf)
   local returned = retval & 0xfffff
   if returned < 1 then return end
 
@@ -1607,8 +1613,11 @@ function M.collect(sel_start, sel_stop, rate, track_rules)
         if take and not reaper.TakeIsMIDI(take) then
           local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
           if math.abs(playrate - 1.0) > 1e-6 then
-            M.log("WARNING: track '%s' item at %.2f has playrate %.3f; "
-              .. "peak times will be wrong. Reset it to 1.0.", name, pos, playrate)
+            -- Project-time reads absorb playrate, so peak timing stays correct;
+            -- flag it anyway, because a stretched item in a rehearsal recording
+            -- is almost certainly an accident.
+            M.log("NOTE: track '%s' item at %.2f has playrate %.3f.",
+              name, pos, playrate)
           end
           read_take_peaks(take, item_start, item_stop, sel_start, rate, frames)
         end
@@ -1634,6 +1643,8 @@ return M
 - [ ] **Step 2: Verify against the probe's findings**
 
 Re-read `docs/notes/reascript-findings.md`. Confirm the `starttime` argument and the `mins_offset` arithmetic match what was observed. Correct either the code or the findings file so they agree.
+
+Pay particular attention to the finding that a read outside an item's extent returns a full buffer of zeros with no error. The adapter must never infer media presence from the peaks call — item extents come from `GetMediaItemInfo_Value`, and every frame outside them stays `false`.
 
 - [ ] **Step 3: Commit**
 
@@ -2209,3 +2220,12 @@ document.
   (404) to `http://dkolf.de/dkjson-lua/dkjson-2.11.lua` — the unversioned
   filename is no longer served; see `task-7-report.md` for the deviation as
   actually taken.
+- Task 1's probe was rewritten after its first run proved inconclusive: it had
+  compared a read at `D_STARTOFFS` against a read at `0`, which are the same
+  request on an untrimmed item, and sampled the item's first half second, which
+  in a rehearsal recording is usually silence. The replacement reads the
+  midpoint and tests source, item-relative and project time in one pass.
+- Task 8's adapter corrected: `starttime` is project time, not source time, so
+  the absolute item position is passed and `D_STARTOFFS` is not added. The
+  playrate warning is downgraded to a note, since project-time reads absorb
+  playrate. Verified in `docs/notes/reascript-findings.md`.
