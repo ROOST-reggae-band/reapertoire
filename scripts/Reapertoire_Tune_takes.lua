@@ -214,6 +214,8 @@ local function save_thresholds()
     minGapSec = detection.minGapSec,
     minTakeSec = detection.minTakeSec,
     minLevelDb = detection.minLevelDb,
+    minEnsemble = detection.minEnsemble,
+    ensembleRatio = detection.ensembleRatio,
   }) do
     local pattern = '("' .. key .. '"%s*:%s*)[%-%d%.eE+]+'
     local replaced
@@ -294,6 +296,14 @@ local function frame()
     c, v = ImGui.SliderDouble(ctx, "minLevelDb", detection.minLevelDb, -140, -20, "%.0f dBFS")
     if c then detection.minLevelDb = v; changed = true end
 
+    -- The handle that separates a run-through from one player working a part:
+    -- both are sustained playing, so only the number of people differs.
+    c, v = ImGui.SliderDouble(ctx, "minEnsemble", detection.minEnsemble, 0, 1, "%.2f")
+    if c then detection.minEnsemble = v; changed = true end
+
+    c, v = ImGui.SliderDouble(ctx, "ensembleRatio", detection.ensembleRatio, 0.25, 1, "%.2f of lineup")
+    if c then detection.ensembleRatio = v; changed = true end
+
     if changed then redetect() end
 
     ImGui.Separator(ctx)
@@ -352,8 +362,8 @@ local function frame()
     if ImGui.BeginChild(ctx, "takes", 0, 0) then
       for i, t in ipairs(detected.takes) do
         local clash = clashes[i]
-        ImGui.Text(ctx, string.format("%2d  %9s  %6.0fs  %s%s",
-          i, mmss(t.start), t.stop - t.start,
+        ImGui.Text(ctx, string.format("%2d  %9s  %6.0fs  ens %3.0f%%  %s%s",
+          i, mmss(t.start), t.stop - t.start, (t.ensemble or 0) * 100,
           table.concat(t.instruments, ", "),
           clash and string.format("   [skipped: overlaps \"%s\"]", clash.name) or ""))
       end

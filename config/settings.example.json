@@ -18,7 +18,9 @@
     "presenceMinFraction": 0.05,
     "mergeGapSec": 0.05,
     "snapToMeasure": false,
-    "minLevelDb": -140
+    "minLevelDb": -140,
+    "ensembleRatio": 0.5,
+    "minEnsemble": 0
   },
   "tracks": [
     {

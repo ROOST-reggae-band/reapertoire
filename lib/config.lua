@@ -26,6 +26,8 @@ function M.defaults()
       presenceMinFraction = 0.05,
       mergeGapSec = 0.05,
       minLevelDb = -140,
+      ensembleRatio = 0.5,
+      minEnsemble = 0,
       snapToMeasure = false,
     },
     tracks = {},

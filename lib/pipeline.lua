@@ -31,6 +31,8 @@ function M.detection_opts(d)
     presence_min_fraction = d.presenceMinFraction,
     merge_gap_sec = d.mergeGapSec,
     min_level_db = d.minLevelDb,
+    ensemble_ratio = d.ensembleRatio,
+    min_ensemble = d.minEnsemble,
     snap_to_measure = d.snapToMeasure,
   }
 end
@@ -87,12 +89,21 @@ function M.detect(classified, input)
   local activity = detect.activity(classified.tracks, opts, classified.n_frames)
   local takes = detect.takes(activity, covered_spans, input.sel_start, rate, opts)
 
+  -- Ensemble density is attached to every take, then used to filter only if a
+  -- minimum is set. Reporting it even when unused is the point: it is the
+  -- number the operator is deciding about.
+  local kept = {}
   for _, take in ipairs(takes) do
     take.instruments = presence.instruments_in(
       classified.tracks, take, input.sel_start, rate, opts)
+    take.ensemble = presence.ensemble(
+      classified.tracks, take, input.sel_start, rate, opts)
+    if take.ensemble >= (opts.min_ensemble or 0) then
+      kept[#kept + 1] = take
+    end
   end
 
-  return { covered_spans = covered_spans, takes = takes }
+  return { covered_spans = covered_spans, takes = kept }
 end
 
 -- The whole pipeline, for callers that run it once.
