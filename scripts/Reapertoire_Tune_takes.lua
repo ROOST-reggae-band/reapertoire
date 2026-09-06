@@ -14,6 +14,7 @@ local adapter = require("adapters.reaper_api")
 local regions = require("adapters.regions")
 local config = require("lib.config")
 local pipeline = require("lib.pipeline")
+local timeline = require("lib.timeline")
 
 -- ReaImGui exposes a flat reaper.ImGui_* API in older versions and a namespaced
 -- shim in newer ones. Bind whichever is present rather than guessing.
@@ -68,6 +69,7 @@ local input = {
 }
 
 local classified, detected
+local foreign, clashes = {}, {}
 local status = ""
 
 local function collect()
@@ -78,8 +80,19 @@ local function collect()
   classified = pipeline.classify(input)
 end
 
+-- Which detected takes would collide with a region the operator made. Computed
+-- up front so the clash is visible while tuning, not a surprise on Create.
+local function recheck_clashes()
+  foreign = regions.foreign()
+  clashes = {}
+  for i, take in ipairs(detected.takes) do
+    clashes[i] = timeline.first_overlap(take, foreign)
+  end
+end
+
 local function redetect()
   detected = pipeline.detect(classified, input)
+  recheck_clashes()
 end
 
 collect()
@@ -195,6 +208,9 @@ local function frame()
 
     ImGui.Separator(ctx)
 
+    local n_clashes = 0
+    for _ in pairs(clashes) do n_clashes = n_clashes + 1 end
+
     local span = span_seconds()
     ImGui.Text(ctx, string.format(
       "%d takes   %.0f%% of %d covered span%s",
@@ -203,17 +219,34 @@ local function frame()
       #detected.covered_spans,
       #detected.covered_spans == 1 and "" or "s"))
 
+    if n_clashes > 0 then
+      ImGui.Text(ctx, string.format(
+        "%d would be skipped -- they overlap regions you made yourself",
+        n_clashes))
+    end
+
     if ImGui.Button(ctx, "Create regions") then
-      local made = regions.replace(
+      local made, skipped = regions.replace(
         detected.takes,
         function(_, i) return string.format("Take %d", i) end,
         0)
-      status = string.format("Wrote %d regions", made)
+      if #skipped == 0 then
+        status = string.format("Wrote %d regions", made)
+      else
+        local names = {}
+        for _, s2 in ipairs(skipped) do
+          names[#names + 1] = string.format("%d overlaps \"%s\"", s2.index, s2.clash.name)
+        end
+        status = string.format("Wrote %d regions, skipped %d: %s",
+          made, #skipped, table.concat(names, ", "))
+      end
+      recheck_clashes()
     end
     ImGui.SameLine(ctx)
     if ImGui.Button(ctx, "Clear regions") then
       local gone = regions.clear()
       status = string.format("Removed %d regions", gone)
+      recheck_clashes()
     end
     ImGui.SameLine(ctx)
     if ImGui.Button(ctx, "Save thresholds") then save_thresholds() end
@@ -224,9 +257,11 @@ local function frame()
 
     if ImGui.BeginChild(ctx, "takes", 0, 0) then
       for i, t in ipairs(detected.takes) do
-        ImGui.Text(ctx, string.format("%2d  %9s  %6.0fs  %s",
+        local clash = clashes[i]
+        ImGui.Text(ctx, string.format("%2d  %9s  %6.0fs  %s%s",
           i, mmss(t.start), t.stop - t.start,
-          table.concat(t.instruments, ", ")))
+          table.concat(t.instruments, ", "),
+          clash and string.format("   [skipped: overlaps \"%s\"]", clash.name) or ""))
       end
       ImGui.EndChild(ctx)
     end

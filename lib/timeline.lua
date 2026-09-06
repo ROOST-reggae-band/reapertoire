@@ -43,4 +43,20 @@ function M.covered_spans(items, sel_start, sel_stop, merge_gap)
   return out
 end
 
+-- Two half-open spans overlap when each starts before the other ends. Spans
+-- that merely touch at an edge do not overlap: a take ending exactly where a
+-- region begins is adjacent, not colliding.
+function M.overlaps(a, b)
+  return a.start < b.stop and b.start < a.stop
+end
+
+-- The first span in `others` that overlaps `span`, or nil. Used to leave the
+-- operator's own regions untouched rather than writing across them.
+function M.first_overlap(span, others)
+  for _, other in ipairs(others) do
+    if M.overlaps(span, other) then return other end
+  end
+  return nil
+end
+
 return M
