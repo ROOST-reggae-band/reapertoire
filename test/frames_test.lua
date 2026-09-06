@@ -31,4 +31,27 @@ function T.count_rounds_up_a_partial_final_frame()
   h.assert_eq(frames.count(0, 1.01, 20), 21)
 end
 
+function T.range_of_excludes_the_frame_starting_at_stop()
+  -- index_of(span.stop) is the first frame of the NEXT span; range_of must
+  -- stop one frame short of it.
+  local i0, i1 = frames.range_of({ start = 0, stop = 1 }, 0, 20)
+  h.assert_eq(i0, 1)
+  h.assert_eq(i1, 20)
+end
+
+function T.range_of_clamps_i0_to_one_for_a_span_before_the_selection()
+  local i0 = frames.range_of({ start = -5, stop = 1 }, 0, 20)
+  h.assert_eq(i0, 1)
+end
+
+function T.range_of_clamps_i1_to_n_frames_when_given()
+  local _, i1 = frames.range_of({ start = 0, stop = 100 }, 0, 20, 50)
+  h.assert_eq(i1, 50)
+end
+
+function T.range_of_applies_no_upper_clamp_when_n_frames_is_nil()
+  local _, i1 = frames.range_of({ start = 0, stop = 100 }, 0, 20, nil)
+  h.assert_eq(i1, 2000)
+end
+
 return T

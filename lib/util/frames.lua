@@ -20,4 +20,17 @@ function M.count(sel_start, sel_stop, rate)
   return math.ceil((sel_stop - sel_start) * rate - 1e-9)
 end
 
+-- Inclusive frame range covering [span.start, span.stop), clamped into a dense
+-- array of n_frames (pass nil for no upper clamp).
+--
+-- This is deliberately NOT index_of(span.stop): that is the frame which STARTS
+-- at span.stop, and it belongs to the following span. Reading it lets one span
+-- consume a frame of its successor's audio.
+function M.range_of(span, sel_start, rate, n_frames)
+  local i0 = math.max(1, M.index_of(span.start, sel_start, rate))
+  local i1 = M.index_of(span.stop, sel_start, rate) - 1
+  if n_frames then i1 = math.min(n_frames, i1) end
+  return i0, i1
+end
+
 return M
