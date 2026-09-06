@@ -5,6 +5,11 @@
 local M = {}
 
 -- Frame index containing time t. 1-based, so sel_start itself is frame 1.
+--
+-- The 1e-9 is in FRAME units (fractional frames), not seconds: it nudges a
+-- value that should land exactly on a frame boundary but arrives a hair
+-- under it, e.g. from float error accumulated at large absolute timeline
+-- offsets, back onto the intended frame instead of the one before it.
 function M.index_of(t, sel_start, rate)
   return math.floor((t - sel_start) * rate + 1e-9) + 1
 end
@@ -16,6 +21,10 @@ end
 
 -- Number of frames needed to cover [sel_start, sel_stop], rounding up so a
 -- partial final frame is still represented.
+--
+-- The 1e-9 is in FRAME units, same reasoning as in index_of: it defends
+-- against a duration landing a hair over a whole number of frames and being
+-- rounded up to one frame too many.
 function M.count(sel_start, sel_stop, rate)
   return math.ceil((sel_stop - sel_start) * rate - 1e-9)
 end
