@@ -24,6 +24,7 @@ function M.defaults()
       minTakeSec = 30.0,
       padSec = 0.5,
       presenceMinFraction = 0.05,
+      mergeGapSec = 0.05,
       snapToMeasure = false,
     },
     tracks = {},
