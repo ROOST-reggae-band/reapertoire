@@ -16,22 +16,37 @@ local config = require("lib.config")
 local pipeline = require("lib.pipeline")
 local timeline = require("lib.timeline")
 
--- ReaImGui exposes a flat reaper.ImGui_* API in older versions and a namespaced
--- shim in newer ones. Bind whichever is present rather than guessing.
+-- ReaImGui's binding moved over its lifetime: 0.10 ships a Lua shim inside the
+-- extension and reaches it via ImGui_GetBuiltinPath, 0.9 shipped that shim as a
+-- separate ReaPack file, and older versions exposed only flat reaper.ImGui_*
+-- functions. Try them in that order rather than assuming a version.
 local ImGui
 do
-  local shim = reaper.GetResourcePath() .. "/Scripts/ReaTeam Extensions/API/imgui.lua"
-  local f = io.open(shim, "r")
-  if f then
-    f:close()
-    local ok, mod = pcall(function() return dofile(shim)("0.9") end)
+  if reaper.ImGui_GetBuiltinPath then
+    local ok, mod = pcall(function()
+      package.path = package.path .. ";" .. reaper.ImGui_GetBuiltinPath() .. "/?.lua"
+      return require("imgui")("0.10")
+    end)
     if ok then ImGui = mod end
   end
+
+  if not ImGui then
+    local shim = reaper.GetResourcePath() .. "/Scripts/ReaTeam Extensions/API/imgui.lua"
+    local f = io.open(shim, "r")
+    if f then
+      f:close()
+      local ok, mod = pcall(function() return dofile(shim)("0.9") end)
+      if ok then ImGui = mod end
+    end
+  end
+
+  -- Flat API: present through 0.10, though no longer the documented route.
   if not ImGui and reaper.ImGui_CreateContext then
     ImGui = setmetatable({}, {
       __index = function(_, k) return reaper["ImGui_" .. k] end,
     })
   end
+
   if not ImGui then
     reaper.MB(
       "ReaImGui is not installed.\n\n" ..
