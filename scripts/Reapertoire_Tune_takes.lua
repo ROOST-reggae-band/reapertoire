@@ -6,6 +6,11 @@
 -- re-runs on cached frames whenever a slider moves, which is why this can be
 -- live at all.
 
+-- Running the action while this panel is already open should reopen it, not
+-- silently kill it. 1 = auto-terminate a running instance, 2 = relaunch after
+-- terminating; without the 2 the relaunch is dropped and nothing appears.
+if reaper.set_action_options then reaper.set_action_options(1 | 2) end
+
 local script_path = ({ reaper.get_action_context() })[2]
 local repo_dir = script_path:match("^(.*)[/\\]scripts[/\\][^/\\]*$")
 package.path = repo_dir .. "/?.lua;" .. repo_dir .. "/?/init.lua;" .. package.path
