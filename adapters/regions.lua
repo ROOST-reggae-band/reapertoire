@@ -30,7 +30,7 @@ end
 
 local function guid_at(enum_index)
   local ok, guid = reaper.GetSetProjectInfo_String(
-    "MARKER_GUID:" .. enum_index, "", false)
+    0, "MARKER_GUID:" .. enum_index, "", false)
   if ok and guid ~= "" then return guid end
   return nil
 end
