@@ -21,6 +21,7 @@ local naming = require("lib.naming")
 local session_lib = require("lib.session")
 local manifest_lib = require("lib.manifest")
 local json = require("lib.util.json")
+local text = require("lib.util.text")
 
 local function log(fmt, ...)
   reaper.ShowConsoleMsg(string.format(fmt .. "\n", ...))
@@ -150,13 +151,9 @@ session.outputDir = out_dir
 
 log("Rendering %d take%s to %s", #rows, #rows == 1 and "" or "s", out_dir)
 
-local function slug(s)
-  return (s:gsub("[^%w]+", "-"):gsub("%-+", "-"):gsub("^%-", ""):gsub("%-$", "")):lower()
-end
-
 local rendered = {}
 for i, row in ipairs(rows) do
-  local folder = string.format("%s/%02d-%s-%s", out_dir, i, slug(row.song), slug(row.label))
+  local folder = string.format("%s/%02d-%s-%s", out_dir, i, text.slug(row.song), text.slug(row.label))
   reaper.RecursiveCreateDirectory(folder, 0)
 
   local path, err = render.take(folder, "master", row.start, row.stop)

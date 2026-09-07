@@ -45,4 +45,22 @@ function T.folding_nil_is_empty_not_an_error()
   h.assert_eq(text.fold(nil), "")
 end
 
+function T.slugs_transliterate_rather_than_dropping_accents()
+  -- %w is byte-wise, so slugging without folding first turns Ptáčci into
+  -- "pt-ci" -- the accented letters vanish instead of transliterating.
+  h.assert_eq(text.slug("Ptáčci"), "ptacci")
+  h.assert_eq(text.slug("Zkušebna"), "zkusebna")
+  h.assert_eq(text.slug("Nemám plán"), "nemam-plan")
+  h.assert_eq(text.slug("Ještě"), "jeste")
+end
+
+function T.slugs_collapse_punctuation_and_trim()
+  h.assert_eq(text.slug("F&F"), "f-f")
+  h.assert_eq(text.slug("  -- Dub  Corner -- "), "dub-corner")
+end
+
+function T.a_slug_of_only_punctuation_is_empty()
+  h.assert_eq(text.slug("!!!"), "")
+end
+
 return T

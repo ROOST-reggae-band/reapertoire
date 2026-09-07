@@ -8,6 +8,7 @@
 -- be handed downstream.
 
 local json = require("lib.util.json")
+local text = require("lib.util.text")
 
 local M = {}
 
@@ -117,9 +118,7 @@ end
 -- directory sorts chronologically and reads as what it is.
 function M.folder_name(session)
   local date = (session.heldAt or ""):match("^(%d%d%d%d%-%d%d%-%d%d)") or "undated"
-  local slug = (session.label or "session")
-    :gsub("[^%w%-]+", "-"):gsub("%-+", "-"):gsub("^%-", ""):gsub("%-$", "")
-    :lower()
+  local slug = text.slug(session.label or "session")
   if slug == "" then slug = "session" end
   return date .. "-" .. slug
 end

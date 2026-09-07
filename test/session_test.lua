@@ -99,7 +99,7 @@ end
 function T.folder_name_is_date_then_slug()
   h.assert_eq(session.folder_name({
     heldAt = "2026-09-05T19:30:00+02:00", label = "Zkušebna",
-  }), "2026-09-05-zku-ebna")
+  }), "2026-09-05-zkusebna")
 end
 
 function T.folder_name_copes_with_a_missing_date_or_label()
