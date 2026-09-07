@@ -38,6 +38,25 @@ from pathlib import Path
 
 import numpy as np
 
+# GUI applications on macOS do not inherit a login shell's PATH, so a tool
+# launched from inside REAPER sees neither /opt/homebrew/bin nor
+# /usr/local/bin. Resolve the binaries once, by absolute path.
+def _tool(name):
+    from shutil import which
+
+    found = which(name)
+    if found:
+        return found
+    for prefix in ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"):
+        candidate = os.path.join(prefix, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return name  # let the failure name the tool it could not find
+
+
+FFMPEG = _tool("ffmpeg")
+FFPROBE = _tool("ffprobe")
+
 # How much each feature counts. Tempo is weighted highest because arrangements
 # in this repertoire are fixed, which makes it unusually discriminative; chroma
 # carries the harmonic identity; duration is the weakest, since a run-through
@@ -72,7 +91,7 @@ SCHEMA = 1
 
 def probe_duration(path):
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+        [FFPROBE, "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", str(path)],
         capture_output=True, text=True,
     )
@@ -85,7 +104,7 @@ def probe_duration(path):
 def decode(path, offset, seconds, sr=SAMPLE_RATE):
     """Mono float32 samples via ffmpeg. Seeking before -i is the fast path."""
     out = subprocess.run(
-        ["ffmpeg", "-nostdin", "-v", "error",
+        [FFMPEG, "-nostdin", "-v", "error",
          "-ss", f"{offset:.3f}", "-t", f"{seconds:.3f}", "-i", str(path),
          "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
         capture_output=True,
@@ -177,23 +196,32 @@ def estimate_tempo(spectrum):
     return float(60.0 * frames_per_second / lag)
 
 
-def extract(path, duration=None):
+def extract(path, duration=None, file_seconds=None):
     """Feature vector for one audio file.
 
-    `duration` is passed in wherever the caller already knows it -- the manifest
-    records it, and the panel knows its own region bounds. Asking ffprobe costs
-    a second subprocess per file, doubling the spawn count for a number we
-    already have.
-    """
-    if not duration or duration <= 0:
-        duration = probe_duration(path)
-    if duration <= 0:
-        return None
+    Two different facts, deliberately separate:
 
-    # From the middle of the take: the opening is often a count-in or someone
-    # still settling, which says little about which song this is.
-    offset = max(0.0, (duration - WINDOW_SECONDS) / 2.0)
-    y = decode(path, offset, min(WINDOW_SECONDS, duration))
+    `duration` is how long the TAKE is, and is what the duration feature
+    compares. `file_seconds` is how long this FILE is, and only decides where
+    to read from. They differ when the file is a short excerpt cut from the
+    middle of a take, which is what the naming panel supplies -- and getting
+    them confused makes every probe's duration feature maximally wrong.
+
+    Both are passed in wherever the caller knows them: the manifest records the
+    take's duration and the panel knows its own region bounds, so asking
+    ffprobe costs a subprocess for a number already in hand.
+    """
+    if not file_seconds or file_seconds <= 0:
+        file_seconds = probe_duration(path)
+    if file_seconds <= 0:
+        return None
+    if not duration or duration <= 0:
+        duration = file_seconds
+
+    # From the middle of whatever this file holds. When it is already an
+    # excerpt, that is the middle of the excerpt.
+    offset = max(0.0, (file_seconds - WINDOW_SECONDS) / 2.0)
+    y = decode(path, offset, min(WINDOW_SECONDS, file_seconds))
     if y.size == 0:
         return None
 
@@ -237,7 +265,7 @@ def distance(a, b):
 def extract_many(jobs):
     """Features for several files at once.
 
-    `jobs` are (path, duration_or_None). Each extraction spends most of its time
+    `jobs` are (path, take_duration_or_None, file_seconds_or_None). Each extraction spends most of its time
     waiting on an ffmpeg subprocess, so threads overlap almost perfectly despite
     the GIL.
     """
@@ -245,7 +273,7 @@ def extract_many(jobs):
         return []
     workers = min(len(jobs), (os.cpu_count() or 4))
     if workers <= 1:
-        return [extract(p, d) for p, d in jobs]
+        return [extract(*job) for job in jobs]
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(lambda job: extract(*job), jobs))
 
@@ -273,10 +301,11 @@ def cmd_index(args):
             audio = Path(master["path"])
             if audio.exists():
                 seconds = (take.get("durationMs") or 0) / 1000.0 or None
+                # The rendered master IS the take, so its length is the take's.
                 pending.append((song, audio, take.get("clientRef"), seconds))
 
     for (song, audio, ref, _), features in zip(
-        pending, extract_many([(a, d) for _, a, _, d in pending])
+        pending, extract_many([(a, d, d) for _, a, _, d in pending])
     ):
         if not features:
             continue
@@ -295,7 +324,9 @@ def cmd_match(args):
     request = json.loads(Path(args.input).read_text())
 
     items = request.get("takes", [])
-    probes = extract_many([(Path(i["path"]), i.get("duration")) for i in items])
+    probes = extract_many([
+        (Path(i["path"]), i.get("duration"), i.get("fileSeconds")) for i in items
+    ])
 
     results = {}
     for item, probe in zip(items, probes):

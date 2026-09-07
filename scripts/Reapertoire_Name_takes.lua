@@ -193,12 +193,12 @@ local function run_recognition()
 
   -- 25 s is plenty for a chord distribution and a tempo, and the probe render
   -- runs the whole FX chain, so every second counts.
-  local dir, paths, failures = recognise.render_probes(render, pending, 25)
+  local dir, paths, failures, meta = recognise.render_probes(render, pending, 25)
 
   local rendered = 0
   for _ in pairs(paths) do rendered = rendered + 1 end
 
-  local ranked, match_error = recognise.match(repo_dir, references, paths)
+  local ranked, match_error = recognise.match(repo_dir, references, paths, meta)
   recognise.remove_probes(dir)
 
   local guessed = 0

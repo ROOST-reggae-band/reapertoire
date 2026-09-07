@@ -46,7 +46,7 @@ function M.render_probes(render, rows, seconds)
   local dir = string.format("%s/reapertoire-probe-%d", temp_dir(), os.time())
   reaper.RecursiveCreateDirectory(dir, 0)
 
-  local paths, failures = {}, {}
+  local paths, failures, meta = {}, {}, {}
   for _, row in ipairs(rows) do
     -- A slice from the middle: the opening of a take is often a count-in or
     -- someone still settling, which says little about which song it is.
@@ -56,11 +56,14 @@ function M.render_probes(render, rows, seconds)
     local path, err = render.probe(dir, tostring(row.key), from, from + window)
     if path then
       paths[row.key] = path
+      -- The take's own length, not the excerpt's: it is what the duration
+      -- feature compares against the references.
+      meta[row.key] = { duration = row.stop - row.start, fileSeconds = window }
     else
       failures[#failures + 1] = string.format("take %s: %s", tostring(row.key), tostring(err))
     end
   end
-  return dir, paths, failures
+  return dir, paths, failures, meta
 end
 
 function M.remove_probes(dir)
@@ -77,10 +80,14 @@ function M.remove_probes(dir)
 end
 
 -- Ranks the reference library against each probe. Returns { key = { {song, score} } }.
-function M.match(repo_dir, references_path, paths)
+function M.match(repo_dir, references_path, paths, meta)
   local takes = {}
   for key, path in pairs(paths) do
-    takes[#takes + 1] = { id = tostring(key), path = path }
+    local info = meta and meta[key] or {}
+    takes[#takes + 1] = {
+      id = tostring(key), path = path,
+      duration = info.duration, fileSeconds = info.fileSeconds,
+    }
   end
   if #takes == 0 then return {} end
 
