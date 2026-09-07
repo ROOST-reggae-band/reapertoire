@@ -12,6 +12,7 @@ local SUITES = {
   "test.text_test",
   "test.naming_test",
   "test.songs_test",
+  "test.session_test",
   "test.peaks_test",
   "test.report_test",
 }
