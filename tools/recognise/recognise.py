@@ -61,25 +61,26 @@ FFPROBE = _tool("ffprobe")
 # in this repertoire are fixed, which makes it unusually discriminative; chroma
 # carries the harmonic identity; duration is the weakest, since a run-through
 # can be cut short or extended.
-# Measured, not guessed -- and re-measured, which reversed the first answer.
+# Duration is not scored at all.
 #
-# On four takes, tempo looked dominant (separation 1.39 against chroma's 0.60).
-# On twenty-seven it is the other way round: chroma 0.97, tempo 0.82, and
-# duration NEGATIVE at -0.37 -- same-song durations differ more than
-# different-song ones, so weighting it actively hurt. The first measurement was
-# small-sample noise.
+# Not because it measures poorly -- though it does, at -0.37 separation over a
+# real library -- but because it cannot measure anything. A take is very often
+# a fragment: one section being worked on, a false start, the second half after
+# a breakdown. Two takes of the same song routinely differ by minutes, while
+# two different songs played in full are much the same length. The feature is
+# structurally meaningless here, so it is computed for context and left out of
+# the distance.
 #
-# Tempo keeps a small weight rather than none: it is a genuinely independent
-# signal, and at zero the top-3 rate falls. The exact split between 0.05 and
-# 0.15 is within noise on this sample, so a round number is used rather than
-# the grid maximum.
-WEIGHTS = {"tempo": 0.10, "chroma": 0.90, "duration": 0.0}
+# Between the other two, measured over twenty-seven takes: chroma separates at
+# 0.97, tempo at 0.82. Tempo keeps a small weight rather than none -- it is a
+# genuinely independent signal, and at zero the top-3 rate falls. The split
+# between 0.05 and 0.15 is within noise on this sample, so a round number is
+# used rather than the grid maximum.
+WEIGHTS = {"tempo": 0.10, "chroma": 0.90}
 
 # Beyond these, a difference tells us nothing more -- two songs a minute apart
 # in length are simply different, and ninety seconds apart is not "more
 # different".
-DURATION_SCALE = 60.0
-
 # Same-song tempos now spread about 4 BPM against 10 between songs, partly
 # because the estimator octave-flips between takes. A wider scale stops that
 # spread dominating a feature that is only a supporting signal.
@@ -260,9 +261,11 @@ def extract(path, duration=None, file_seconds=None):
 
 
 def distance(a, b):
-    """Weighted distance between two feature vectors. Lower is closer."""
-    d_dur = min(abs(a["duration"] - b["duration"]) / DURATION_SCALE, 1.0)
+    """Weighted distance between two feature vectors. Lower is closer.
 
+    Duration is deliberately absent: a take is often a fragment of a song, so
+    its length says nothing about which song it is.
+    """
     # Compare tempo against its half and double too: reporting 172 where the
     # band feels 86 is a routine octave error, not a different song.
     ta, tb = a["tempo"], b["tempo"]
@@ -279,11 +282,7 @@ def distance(a, b):
     best = min(float(np.linalg.norm(np.roll(ca, shift) - cb)) for shift in range(12))
     d_chroma = min(best / np.sqrt(2.0), 1.0)
 
-    return (
-        WEIGHTS["duration"] * d_dur
-        + WEIGHTS["tempo"] * d_tempo
-        + WEIGHTS["chroma"] * d_chroma
-    )
+    return WEIGHTS["tempo"] * d_tempo + WEIGHTS["chroma"] * d_chroma
 
 
 def extract_many(jobs):

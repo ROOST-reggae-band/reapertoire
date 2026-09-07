@@ -140,10 +140,13 @@ count-in or someone still settling.
 
 ### The three features
 
-**Duration** — weight 0. Measured against a real library it separates nothing:
-same-song takes differ in length *more* than different-song ones do, because a
-run-through gets cut short or extended far more than two different songs differ.
-It is computed and stored, but weighted at zero.
+**Duration** — not scored at all.
+
+Not because it measures poorly, though it does, but because it cannot measure
+anything. A take is very often a fragment: one section being worked on, a false
+start, the second half after a breakdown. Two takes of the same song routinely
+differ by minutes, while two different songs played in full are much the same
+length. It is computed and stored for context and left out of the distance.
 
 **Tempo** — weight 0.10. A genuinely independent signal, but a weaker one than
 it first appeared, partly because the estimator octave-flips between takes of
@@ -216,14 +219,16 @@ calibrated against:
 |---|---|---|---|
 | chroma | 0.05 | 0.08 | 0.97 |
 | tempo | 4.03 BPM | 10.29 BPM | 0.82 |
-| duration | 126.6 s | 100.2 s | **-0.37** |
+| duration | 126.6 s | 100.2 s | **-0.37** (not scored) |
 
 **These numbers reversed the first calibration.** On an early library of four
 takes, tempo looked dominant (1.39 against chroma's 0.60) and the weights were
-set accordingly. On twenty-seven takes it is the other way round, and duration
-is actively harmful -- same-song takes differ in length more than different
-songs do. The first measurement was small-sample noise, and re-running the
-measurement is the point of keeping it scripted.
+set accordingly. On twenty-seven takes it is the other way round. The first
+measurement was small-sample noise, and re-running it is the point of keeping
+it scripted.
+
+Duration's negative separation is not noise but a property of the domain, which
+is why it is removed rather than down-weighted.
 
 `tools/recognise/evaluate.py` reruns all of this as the library grows. Expect
 the weights to move again.
