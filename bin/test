@@ -8,4 +8,15 @@ if [ ! -x "$LUA" ]; then
   echo "(falling back to whatever 'lua' is on PATH; version drift is on you)" >&2
   LUA=lua
 fi
-exec "$LUA" test/run.lua "$@"
+"$LUA" test/run.lua "$@" || exit 1
+
+# The ingest client is Python and has its own suite. It is the only part of the
+# project that can test its own failure paths, so it is not optional -- but it
+# is skipped rather than failing when the virtualenv has not been created.
+if [ -x .venv/bin/python ]; then
+  echo
+  .venv/bin/python tools/ingest/test_upload.py 2>&1 | tail -3
+else
+  echo
+  echo "(skipping the ingest tests: run ./bin/setup-recognise to create .venv)"
+fi

@@ -32,6 +32,10 @@ function M.build(session, takes)
       heldAt = session.heldAt,
       label = session.label,
       venue = session.venue,
+      -- Where the session starts on the project timeline. Take positions are
+      -- absolute project seconds, so without this nothing downstream can turn
+      -- one into a wall-clock time.
+      rangeStart = session.range and session.range.start,
     },
     takes = {},
   }

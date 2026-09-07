@@ -272,6 +272,46 @@ with it, and the two exchange JSON over temporary files.
 The library is derived data. Delete it and `index` rebuilds it from the
 manifests.
 
+## Pushing to a library server
+
+`tools/ingest/upload.py` sends a rendered session to a bandlib-compatible
+ingest API. It needs no DAW: the manifest a render produced already holds every
+fact the API asks for.
+
+```sh
+export REAPERTOIRE_TOKEN=blk_...
+.venv/bin/python tools/ingest/upload.py \
+  --manifest ~/Music/RehearsalSessions/2026-05-28-practice/manifest.json \
+  --api https://example/api/ingest/v1
+```
+
+`--dry-run` checks the manifest and the files on disk and contacts nothing.
+`--no-publish` leaves takes unpublished for review.
+
+The token is read from the environment and never written anywhere.
+
+**Everything is idempotent.** The session UUID and the region GUIDs are the
+client references, so re-posting either returns the existing row rather than
+creating a second one. An asset whose hash and size already match is skipped
+without re-uploading, which is what lets a run that died on take nine resume
+without pushing the first eight again. Presigned URLs live an hour and a slow
+uplink outlives that, so an expired URL is refreshed and retried rather than
+treated as a failure.
+
+**Two checks run before anything is declared**, because a take declared and
+then not uploaded is left stuck mid-ingest on the server:
+
+- Instrument slugs are validated against the server's live vocabulary. Unknown
+  slugs are rejected with 422 by design, and the message names both the
+  offending slugs and the valid ones.
+- Every asset is confirmed present and unchanged in size since the manifest was
+  written. A manifest outlives its files when a folder is moved or a render is
+  interrupted.
+
+This is the only part of the project whose failure paths are fully testable --
+token rejection, expired URLs, resume, structured 409s -- and it is tested
+against a mock implementing the contract. `./bin/test` runs that suite too.
+
 ## Where things are stored
 
 | What | Where |

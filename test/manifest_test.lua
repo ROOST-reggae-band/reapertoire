@@ -6,6 +6,7 @@ local T = {}
 local SESSION = {
   id = "5e2c8f1a", kind = "rehearsal",
   heldAt = "2026-09-05T19:30:00+02:00", label = "practice",
+  range = { start = 1000, stop = 5000 },
 }
 
 -- A nil in a Lua table literal is an absent key, not a removal, so dropping a
@@ -117,6 +118,13 @@ function T.merging_into_nothing_is_the_fresh_manifest()
   local fresh = manifest.build(SESSION, { take() })
   h.assert_eq(#manifest.merge(nil, fresh).takes, 1)
   h.assert_eq(#manifest.merge({}, fresh).takes, 1)
+end
+
+function T.the_event_records_where_the_session_starts_on_the_timeline()
+  -- Take positions are absolute project seconds; without this nothing
+  -- downstream can turn one into a wall-clock time.
+  local m = manifest.build(SESSION, { take() })
+  h.assert_eq(m.event.rangeStart, 1000)
 end
 
 return T

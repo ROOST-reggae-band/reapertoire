@@ -50,5 +50,8 @@
   "recognition": {
     "minMargin": 0.02,
     "probeFormat": ""
+  },
+  "ingest": {
+    "api": ""
   }
 }
