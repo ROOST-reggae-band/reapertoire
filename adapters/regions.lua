@@ -143,14 +143,17 @@ end
 -- panel works on all of them: a region placed by hand deserves a song name as
 -- much as a detected one.
 function M.all()
+  local owned = load_owned()
   local out = {}
   each_region(function(enum_index, num, pos, rgnend, name)
+    local guid = guid_at(enum_index)
     out[#out + 1] = {
-      guid = guid_at(enum_index),
+      guid = guid,
       num = num,
       start = pos,
       stop = rgnend,
       name = name,
+      owned = (guid and owned[guid]) and true or false,
     }
   end)
   table.sort(out, function(a, b) return a.start < b.start end)

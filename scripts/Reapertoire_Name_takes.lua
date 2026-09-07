@@ -66,8 +66,11 @@ local songs = songs_lib.load(cfg)
 
 -- ----------------------------------------------------------------- the rows
 
-local rows = {}
-local selected = 1
+local rows = {}          -- every region in the project
+local view = {}          -- the filtered subset actually shown
+local selected = 1       -- indexes `view`, not `rows`
+local limit_to_selection = true
+local only_ours = false
 local query = ""
 local status = ""
 local focus_filter = false
@@ -86,22 +89,46 @@ local function load_rows()
       start = r.start,
       stop = r.stop,
       original = r.name,
+      owned = r.owned,
       song = song,
       note = note,
     }
   end
   table.sort(rows, function(a, b) return a.start < b.start end)
-  naming.renumber(rows)
 end
 
 load_rows()
 
-local function unnamed_after(from)
-  for i = from, #rows do
-    if not rows[i].song then return i end
+-- A project holds many rehearsals, so the default is the regions inside the
+-- current time selection. Without a selection the limit is inert rather than
+-- hiding everything.
+local function rebuild_view()
+  local sel_start, sel_stop = adapter.time_selection()
+  view = {}
+  for _, row in ipairs(rows) do
+    local in_selection = true
+    if limit_to_selection and sel_start then
+      in_selection = row.start < sel_stop and sel_start < row.stop
+    end
+    if in_selection and (not only_ours or row.owned) then
+      view[#view + 1] = row
+    end
   end
-  for i = 1, #rows do
-    if not rows[i].song then return i end
+  if selected > #view then selected = #view end
+  if selected < 1 then selected = 1 end
+
+  -- Take numbers count within a session, not across the project. One project
+  -- holds many rehearsals, so numbering over everything would give the same
+  -- song a take number in the forties.
+  naming.renumber(view)
+end
+
+local function unnamed_after(from)
+  for i = from, #view do
+    if not view[i].song then return i end
+  end
+  for i = 1, #view do
+    if not view[i].song then return i end
   end
   return nil
 end
@@ -113,9 +140,8 @@ local function seek_and_play(row)
 end
 
 local function apply_names()
-  naming.renumber(rows)
   local written = 0
-  for _, row in ipairs(rows) do
+  for _, row in ipairs(view) do
     local name = naming.region_name(row)
     if name and name ~= row.original then
       if regions.rename(row.guid, name) then
@@ -127,6 +153,9 @@ local function apply_names()
   status = string.format("Renamed %d region%s", written, written == 1 and "" or "s")
 end
 
+load_rows()
+rebuild_view()
+
 -- ---------------------------------------------------------------------- loop
 
 local ctx = ImGui.CreateContext("Reapertoire naming")
@@ -134,27 +163,35 @@ local ctx = ImGui.CreateContext("Reapertoire naming")
 local function frame()
   local visible, open = ImGui.Begin(ctx, "Reapertoire - name takes", true)
   if visible then
+    rebuild_view()
+
     local named = 0
-    for _, r in ipairs(rows) do if r.song then named = named + 1 end end
-    ImGui.Text(ctx, string.format("%d regions, %d named, %d to go",
-      #rows, named, #rows - named))
+    for _, r in ipairs(view) do if r.song then named = named + 1 end end
+    ImGui.Text(ctx, string.format("%d of %d regions shown - %d named, %d to go",
+      #view, #rows, named, #view - named))
+
+    local c1, v1 = ImGui.Checkbox(ctx, "limit to time selection", limit_to_selection)
+    if c1 then limit_to_selection = v1; selected = 1 end
+    ImGui.SameLine(ctx)
+    local c2, v2 = ImGui.Checkbox(ctx, "only regions I created", only_ours)
+    if c2 then only_ours = v2; selected = 1 end
 
     if status ~= "" then ImGui.Text(ctx, status) end
     ImGui.Separator(ctx)
 
     -- Keyboard: move between rows without leaving the filter box.
     if ImGui.IsKeyPressed(ctx, KEY.Key_DownArrow) then
-      selected = math.min(#rows, selected + 1); query = ""
-      if rows[selected] then seek_and_play(rows[selected]) end
+      selected = math.min(#view, selected + 1); query = ""
+      if view[selected] then seek_and_play(view[selected]) end
     elseif ImGui.IsKeyPressed(ctx, KEY.Key_UpArrow) then
       selected = math.max(1, selected - 1); query = ""
-      if rows[selected] then seek_and_play(rows[selected]) end
+      if view[selected] then seek_and_play(view[selected]) end
     end
 
-    local row = rows[selected]
+    local row = view[selected]
     if row then
       ImGui.Text(ctx, string.format("Take %d of %d   %s   %.0f s   %s",
-        selected, #rows, mmss(row.start),
+        selected, #view, mmss(row.start),
         row.stop - row.start, row.song or "(unnamed)"))
 
       if focus_filter then ImGui.SetKeyboardFocusHere(ctx); focus_filter = false end
@@ -169,12 +206,12 @@ local function frame()
         or ImGui.IsKeyPressed(ctx, KEY.Key_KeypadEnter) then
         if hits[1] then
           row.song = hits[1].title
-          naming.renumber(rows)
+          naming.renumber(view)
           query = ""
           local next_row = unnamed_after(selected + 1)
           if next_row then
             selected = next_row
-            seek_and_play(rows[selected])
+            seek_and_play(view[selected])
           end
           focus_filter = true
         end
@@ -185,7 +222,7 @@ local function frame()
         local marker = (i == 1) and "> " or "  "
         if ImGui.Selectable(ctx, marker .. song.title, i == 1) then
           row.song = song.title
-          naming.renumber(rows)
+          naming.renumber(view)
           query = ""
         end
       end
@@ -194,7 +231,7 @@ local function frame()
         if ImGui.Button(ctx, 'Add "' .. query .. '" as a new song') then
           local added = songs_lib.add(songs, query)
           row.song = added.title
-          naming.renumber(rows)
+          naming.renumber(view)
           query = ""
         end
       end
@@ -203,24 +240,30 @@ local function frame()
         row.note or "")
       if note_changed then
         row.note = note ~= "" and note or nil
-        naming.renumber(rows)
+        naming.renumber(view)
       end
     else
-      ImGui.Text(ctx, "No regions in this project. Create some with the tuning panel.")
+      if #rows == 0 then
+        ImGui.Text(ctx, "No regions in this project. Create some with the tuning panel.")
+      else
+        ImGui.Text(ctx, "No regions match the current filters.")
+      end
     end
 
     ImGui.Separator(ctx)
 
     if ImGui.Button(ctx, "Apply names to regions") then apply_names() end
     ImGui.SameLine(ctx)
-    if ImGui.Button(ctx, "Reload regions") then load_rows(); status = "Reloaded" end
+    if ImGui.Button(ctx, "Reload regions") then
+      load_rows(); rebuild_view(); status = "Reloaded"
+    end
     ImGui.SameLine(ctx)
     if ImGui.Button(ctx, "Stop") then reaper.OnStopButton() end
 
     ImGui.Separator(ctx)
 
     if ImGui.BeginChild(ctx, "rows", 0, 0) then
-      for i, r in ipairs(rows) do
+      for i, r in ipairs(view) do
         local marker = (i == selected) and ">" or " "
         local shown = naming.region_name(r) or "(unnamed)"
         if ImGui.Selectable(ctx, string.format("%s %2d  %9s  %6.0fs  %s",
