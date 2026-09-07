@@ -187,11 +187,22 @@ function M.stems(dir, tracks, start_time, stop_time, log)
       local candidate = string.format("%s/%s.%s", dir, entry.name, ext)
       if M.file_info(candidate) then
         local target = string.format("%s/%s.%s", dir, entry.slug, ext)
-        if candidate ~= target then
+        if candidate == target then
+          found = candidate
+        elseif candidate:lower() == target:lower() then
+          -- Case-only rename on a case-insensitive filesystem: "Bass.mp3" and
+          -- "bass.mp3" are the same file, so removing the target first deletes
+          -- the source. Go via a third name.
+          local staging = target .. ".renaming"
+          if os.rename(candidate, staging) and os.rename(staging, target) then
+            found = target
+          else
+            os.rename(staging, candidate)
+            found = M.file_info(candidate) and candidate or nil
+          end
+        else
           os.remove(target)
           if os.rename(candidate, target) then found = target else found = candidate end
-        else
-          found = candidate
         end
         break
       end
@@ -203,14 +214,14 @@ function M.stems(dir, tracks, start_time, stop_time, log)
   -- anything else in it came from the render and is not wanted -- a stray
   -- Master duplicating the master mix, most likely.
   local keep = {}
-  for _, path in pairs(written) do keep[path] = true end
+  for _, path in pairs(written) do keep[path:lower()] = true end
   local index = 0
   local strays = {}
   while true do
     local name = reaper.EnumerateFiles(dir, index)
     if not name then break end
     local full = dir .. "/" .. name
-    if not keep[full] then strays[#strays + 1] = full end
+    if not keep[full:lower()] then strays[#strays + 1] = full end
     index = index + 1
   end
   for _, path in ipairs(strays) do os.remove(path) end
