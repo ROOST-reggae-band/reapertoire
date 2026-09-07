@@ -107,6 +107,9 @@ function M.collect(sel_start, sel_stop, rate, track_rules)
     end
 
     tracks[#tracks + 1] = {
+      -- Carried so the renderer can select this track later; nothing under
+      -- lib/ ever touches it.
+      media_track = track,
       guid = reaper.GetTrackGUID(track),
       name = name,
       slug = rule and rule.slug or nil,

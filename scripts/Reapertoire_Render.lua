@@ -152,20 +152,28 @@ end
 -- audio and the project are both to hand, and impossible to reconstruct from
 -- the rendered mix afterwards.
 log("Reading levels to work out which instruments play on each take...")
-do
-  local pipeline = require("lib.pipeline")
-  local presence = require("lib.presence")
-  local d = cfg.detection
-  local tracks, items = adapter.collect(sel_start, sel_stop, d.frameRateHz, cfg.tracks)
-  local classified = pipeline.classify({
-    tracks = tracks, items = items,
-    sel_start = sel_start, sel_stop = sel_stop, detection = d,
-  })
-  local opts = pipeline.detection_opts(d)
-  for _, row in ipairs(rows) do
-    row.instruments = presence.instruments_in(
-      classified.tracks, row, sel_start, d.frameRateHz, opts)
-  end
+local pipeline = require("lib.pipeline")
+local presence = require("lib.presence")
+local peaks_lib = require("lib.peaks")
+local frames_util = require("lib.util.frames")
+
+local detection = cfg.detection
+local rate = detection.frameRateHz
+local collected, items = adapter.collect(sel_start, sel_stop, rate, cfg.tracks)
+local classified = pipeline.classify({
+  tracks = collected, items = items,
+  sel_start = sel_start, sel_stop = sel_stop, detection = detection,
+})
+local detect_opts = pipeline.detection_opts(detection)
+for _, row in ipairs(rows) do
+  row.instruments = presence.instruments_in(
+    classified.tracks, row, sel_start, rate, detect_opts)
+end
+
+-- Which REAPER track carries each instrument, for the stem pass.
+local track_for_slug = {}
+for _, t in ipairs(classified.tracks) do
+  if t.live and t.slug and t.media_track then track_for_slug[t.slug] = t end
 end
 
 local root = config.expand_path(cfg.sessionsRoot)
@@ -196,10 +204,55 @@ for i, row in ipairs(rows) do
       sampleRate = srate > 0 and srate or nil,
       channels = channels > 0 and channels or nil,
     } }
-    rendered[#rendered + 1] = row
     log("  %2d  %-24s %s (%.1f MB)  %s", i, row.song,
       path:match("([^/\\]+)$"), (bytes or 0) / 1048576,
       table.concat(row.instruments or {}, ", "))
+
+    -- Peaks, from level data already in hand. A browser would have to download
+    -- and decode the whole file to draw the same picture.
+    local i0, i1 = frames_util.range_of(row, sel_start, rate, classified.n_frames)
+    local peaks_path = folder .. "/peaks.json"
+    local pf = io.open(peaks_path, "w")
+    if pf then
+      pf:write(json.encode(peaks_lib.folded(classified.tracks, i0, i1)))
+      pf:close()
+      row.assets[#row.assets + 1] = {
+        kind = "peaks", tier = "lossy", format = "json",
+        path = peaks_path, bytes = render.file_info(peaks_path),
+        sha256 = render.sha256(peaks_path),
+      }
+    end
+
+    -- Stems, only for instruments actually played on this take. An absent
+    -- player must not produce a silent file.
+    if cfg.render and cfg.render.stems then
+      local wanted = {}
+      for _, slug in ipairs(row.instruments or {}) do
+        local t = track_for_slug[slug]
+        if t then wanted[#wanted + 1] = { media_track = t.media_track, slug = slug, name = t.name } end
+      end
+      if #wanted > 0 then
+        local stem_dir = folder .. "/stems"
+        reaper.RecursiveCreateDirectory(stem_dir, 0)
+        local written, missing = render.stems(stem_dir, wanted, row.start, row.stop)
+        local n = 0
+        for slug, stem_path in pairs(written) do
+          n = n + 1
+          row.assets[#row.assets + 1] = {
+            kind = "stem", instrument = slug, tier = "lossy",
+            format = stem_path:match("%.(%w+)$"), path = stem_path,
+            bytes = render.file_info(stem_path), sha256 = render.sha256(stem_path),
+            durationMs = math.floor((row.stop - row.start) * 1000 + 0.5),
+            sampleRate = srate > 0 and srate or nil,
+            channels = channels > 0 and channels or nil,
+          }
+        end
+        log("      %d stem%s%s", n, n == 1 and "" or "s",
+          #missing > 0 and (" (missing: " .. table.concat(missing, ", ") .. ")") or "")
+      end
+    end
+
+    rendered[#rendered + 1] = row
   end
 end
 

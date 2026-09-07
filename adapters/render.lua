@@ -87,6 +87,71 @@ function M.sha256(path)
   return out and out:match("^(%x+)") or nil
 end
 
+-- Renders one file per given track in a single pass. REAPER's stems-only mode
+-- writes a file per selected track, which beats one render pass per instrument.
+--
+-- `tracks` are { media_track, slug }. Returns a map of slug to path, plus a
+-- list of slugs whose file never appeared.
+function M.stems(dir, tracks, start_time, stop_time)
+  if #tracks == 0 then return {}, {} end
+  if not M.format_configured() then
+    return {}, {}, "no render format configured in this project"
+  end
+
+  local saved = snapshot()
+
+  -- Track selection is the operator's, so it is restored along with everything
+  -- else however the render goes.
+  local was_selected = {}
+  for i = 0, reaper.CountTracks(0) - 1 do
+    local t = reaper.GetTrack(0, i)
+    was_selected[i] = reaper.IsTrackSelected(t)
+    reaper.SetTrackSelected(t, false)
+  end
+  for _, entry in ipairs(tracks) do
+    reaper.SetTrackSelected(entry.media_track, true)
+  end
+
+  reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", 0, true)
+  reaper.GetSetProjectInfo(0, "RENDER_STARTPOS", start_time, true)
+  reaper.GetSetProjectInfo(0, "RENDER_ENDPOS", stop_time, true)
+  reaper.GetSetProjectInfo(0, "RENDER_TAILFLAG", 0, true)
+  reaper.GetSetProjectInfo(0, "RENDER_ADDTOPROJ", 0, true)
+  reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 2, true) -- stems only
+  reaper.GetSetProjectInfo_String(0, "RENDER_FILE", dir, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", "$track", true)
+
+  reaper.Main_OnCommand(RENDER_ACTION, 0)
+
+  for i = 0, reaper.CountTracks(0) - 1 do
+    reaper.SetTrackSelected(reaper.GetTrack(0, i), was_selected[i] or false)
+  end
+  restore(saved)
+
+  -- Files land under the track's name; the manifest wants the instrument slug,
+  -- so each is renamed once found.
+  local written, missing = {}, {}
+  for _, entry in ipairs(tracks) do
+    local found
+    for _, ext in ipairs({ "opus", "ogg", "mp3", "wav", "flac", "m4a", "aiff" }) do
+      local candidate = string.format("%s/%s.%s", dir, entry.name, ext)
+      if M.file_info(candidate) then
+        local target = string.format("%s/%s.%s", dir, entry.slug, ext)
+        if candidate ~= target then
+          os.remove(target)
+          if os.rename(candidate, target) then found = target else found = candidate end
+        else
+          found = candidate
+        end
+        break
+      end
+    end
+    if found then written[entry.slug] = found else missing[#missing + 1] = entry.slug end
+  end
+
+  return written, missing
+end
+
 -- Renders [start, stop) to `dir/filename`. `filename` carries no extension --
 -- REAPER appends whatever the configured format uses.
 --
