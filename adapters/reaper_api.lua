@@ -110,6 +110,9 @@ function M.collect(sel_start, sel_stop, rate, track_rules)
       -- Carried so the renderer can select this track later; nothing under
       -- lib/ ever touches it.
       media_track = track,
+      -- A folder parent sums its children, so rendering one as a stem stores
+      -- the same audio twice. Recorded here; acted on at render time.
+      is_folder = reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH") == 1,
       guid = reaper.GetTrackGUID(track),
       name = name,
       slug = rule and rule.slug or nil,

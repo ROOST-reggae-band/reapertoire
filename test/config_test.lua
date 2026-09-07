@@ -140,4 +140,16 @@ function T.validate_accepts_the_defaults()
   h.assert_eq(ok, true)
 end
 
+function T.a_track_rule_can_opt_out_of_stem_rendering()
+  -- A submix fed by sends looks like any other track, so it cannot be detected
+  -- the way a folder parent can and has to be marked.
+  local rules = {
+    { match = "Snare Bus", slug = "drums-snare", stem = false },
+    { match = "Snare Top", slug = "drums-snare-top" },
+  }
+  h.assert_eq(config.match_track("Snare Bus", rules).stem, false)
+  h.assert_eq(config.match_track("Snare Top", rules).stem, nil,
+    "absent means render it")
+end
+
 return T

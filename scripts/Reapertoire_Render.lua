@@ -171,9 +171,27 @@ for _, row in ipairs(rows) do
 end
 
 -- Which REAPER track carries each instrument, for the stem pass.
+--
+-- Folder parents are excluded: they sum their children, so a stem rendered from
+-- one duplicates audio already captured by the individual mics. A rule may also
+-- opt a track out explicitly, for a submix fed by sends, which looks like any
+-- other track.
 local track_for_slug = {}
+local excluded = {}
 for _, t in ipairs(classified.tracks) do
-  if t.live and t.slug and t.media_track then track_for_slug[t.slug] = t end
+  if t.live and t.slug and t.media_track then
+    local rule = config.match_track(t.name, cfg.tracks)
+    if t.is_folder then
+      excluded[#excluded + 1] = t.name .. " (folder)"
+    elseif rule and rule.stem == false then
+      excluded[#excluded + 1] = t.name .. " (stem: false)"
+    else
+      track_for_slug[t.slug] = t
+    end
+  end
+end
+if #excluded > 0 then
+  log("Not rendering stems for: %s", table.concat(excluded, ", "))
 end
 
 local root = config.expand_path(cfg.sessionsRoot)
