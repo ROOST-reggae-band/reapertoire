@@ -47,7 +47,7 @@ end
 
 -- ReaImGui exposes enum values as accessor functions in some versions and as
 -- plain numbers in others. Resolve once rather than assuming either.
-local KEY = setmetatable({}, {
+local ENUM = setmetatable({}, {
   __index = function(t, name)
     local v = ImGui[name]
     if type(v) == "function" then v = v() end
@@ -179,6 +179,9 @@ local guids_ok = regions.guids_available()
 local ctx = ImGui.CreateContext("Reapertoire naming")
 
 local function frame()
+  -- FirstUseEver, so the size is a starting point and not re-imposed every
+  -- frame; resizing the window has to stick.
+  ImGui.SetNextWindowSize(ctx, 1000, 560, ENUM.Cond_FirstUseEver)
   local visible, open = ImGui.Begin(ctx, "Reapertoire - name takes", true)
   if visible then
     rebuild_view()
@@ -195,89 +198,124 @@ local function frame()
     if c2 then only_ours = v2; selected = 1 end
     if not guids_ok then
       ImGui.Text(ctx,
-        "This project does not answer region GUID lookups, so \"only regions I "
-        .. "created\" cannot tell them apart. Renaming is unaffected.")
+        'This project does not answer region GUID lookups, so "only regions I '
+        .. 'created" cannot tell them apart. Renaming is unaffected.')
     end
 
     if status ~= "" then ImGui.Text(ctx, status) end
     ImGui.Separator(ctx)
 
-    -- Keyboard: move between rows without leaving the filter box.
-    if ImGui.IsKeyPressed(ctx, KEY.Key_DownArrow) then
+    -- Arrow keys move the selection wherever focus is, so the hands never have
+    -- to leave the filter box.
+    if ImGui.IsKeyPressed(ctx, ENUM.Key_DownArrow) then
       selected = math.min(#view, selected + 1); query = ""
       if view[selected] then seek_and_play(view[selected]) end
-    elseif ImGui.IsKeyPressed(ctx, KEY.Key_UpArrow) then
+    elseif ImGui.IsKeyPressed(ctx, ENUM.Key_UpArrow) then
       selected = math.max(1, selected - 1); query = ""
       if view[selected] then seek_and_play(view[selected]) end
     end
 
     local row = view[selected]
-    if row then
-      ImGui.Text(ctx, string.format("Take %d of %d   %s   %.0f s   %s",
-        selected, #view, mmss(row.start),
-        row.stop - row.start, row.song or "(unnamed)"))
 
-      if focus_filter then ImGui.SetKeyboardFocusHere(ctx); focus_filter = false end
-      local changed, q = ImGui.InputText(ctx, "filter", query)
-      if changed then query = q end
-
-      local hits = songs_lib.filter(songs, query)
-
-      -- Enter accepts the top match and moves to the next unnamed row, which is
-      -- the whole point: type two letters, press Enter, repeat.
-      if ImGui.IsKeyPressed(ctx, KEY.Key_Enter)
-        or ImGui.IsKeyPressed(ctx, KEY.Key_KeypadEnter) then
-        if hits[1] then
-          row.song = hits[1].title
-          row.cleared = nil
-          naming.renumber(view)
+    -- Left: the takes. Right: what to do with the selected one. Reserving the
+    -- bottom strip keeps the action buttons on screen however long the list is.
+    if ImGui.BeginChild(ctx, "takes", -360, -34) then
+      for i, r in ipairs(view) do
+        local marker = (i == selected) and ">" or " "
+        local shown
+        if r.song then
+          shown = naming.region_name(r)
+        elseif r.cleared then
+          shown = "-- to be cleared --"
+        elseif r.original and r.original ~= "" then
+          -- A region carrying the tuner's "Take 3" placeholder has a name but
+          -- no song. Show it, but never let it read as named.
+          shown = "? " .. r.original
+        else
+          shown = "? (unnamed)"
+        end
+        if ImGui.Selectable(ctx, string.format("%s %2d  %9s  %5.0fs  %s",
+          marker, i, mmss(r.start), r.stop - r.start, shown), i == selected) then
+          selected = i
           query = ""
-          local next_row = unnamed_after(selected + 1)
-          if next_row then
-            selected = next_row
-            seek_and_play(view[selected])
+          seek_and_play(r)
+        end
+      end
+      ImGui.EndChild(ctx)
+    end
+
+    ImGui.SameLine(ctx)
+
+    if ImGui.BeginChild(ctx, "detail", 0, -34) then
+      if row then
+        ImGui.Text(ctx, string.format("Take %d of %d", selected, #view))
+        ImGui.Text(ctx, string.format("%s   %.0f s", mmss(row.start), row.stop - row.start))
+        ImGui.Text(ctx, row.song or "(no song yet)")
+        ImGui.Separator(ctx)
+
+        if focus_filter then ImGui.SetKeyboardFocusHere(ctx); focus_filter = false end
+        local changed, q = ImGui.InputText(ctx, "filter", query)
+        if changed then query = q end
+
+        local hits = songs_lib.filter(songs, query)
+
+        -- Enter accepts the top match and jumps to the next unnamed take: type
+        -- two letters, press Enter, repeat.
+        if ImGui.IsKeyPressed(ctx, ENUM.Key_Enter)
+          or ImGui.IsKeyPressed(ctx, ENUM.Key_KeypadEnter) then
+          if hits[1] then
+            row.song = hits[1].title
+            row.cleared = nil
+            naming.renumber(view)
+            query = ""
+            local next_row = unnamed_after(selected + 1)
+            if next_row then
+              selected = next_row
+              seek_and_play(view[selected])
+            end
+            focus_filter = true
           end
-          focus_filter = true
         end
-      end
 
-      for i, song in ipairs(hits) do
-        if i > 8 then break end
-        local marker = (i == 1) and "> " or "  "
-        if ImGui.Selectable(ctx, marker .. song.title, i == 1) then
-          row.song = song.title
-          row.cleared = nil
+        for i, song in ipairs(hits) do
+          if i > 10 then break end
+          local marker = (i == 1) and "> " or "  "
+          if ImGui.Selectable(ctx, marker .. song.title, i == 1) then
+            row.song = song.title
+            row.cleared = nil
+            naming.renumber(view)
+            query = ""
+          end
+        end
+
+        if query ~= "" and #hits == 0 then
+          if ImGui.Button(ctx, 'Add "' .. query .. '" as a new song') then
+            local added = songs_lib.add(songs, query)
+            row.song = added.title
+            row.cleared = nil
+            naming.renumber(view)
+            query = ""
+          end
+        end
+
+        ImGui.Separator(ctx)
+
+        local note_changed, note = ImGui.InputText(ctx, "note", row.note or "")
+        if note_changed then
+          row.note = note ~= "" and note or nil
           naming.renumber(view)
-          query = ""
         end
-      end
+        ImGui.Text(ctx, "blank = take number")
 
-      if query ~= "" and #hits == 0 then
-        if ImGui.Button(ctx, 'Add "' .. query .. '" as a new song') then
-          local added = songs_lib.add(songs, query)
-          row.song = added.title
-          row.cleared = nil
-          naming.renumber(view)
-          query = ""
-        end
-      end
-
-      if ImGui.Button(ctx, "Clear this name") then clear_row(row) end
-      ImGui.SameLine(ctx)
-      ImGui.Text(ctx, row.cleared and "(will be cleared on Apply)" or "")
-
-      local note_changed, note = ImGui.InputText(ctx, "note (blank = take number)",
-        row.note or "")
-      if note_changed then
-        row.note = note ~= "" and note or nil
-        naming.renumber(view)
-      end
-    else
-      if #rows == 0 then
-        ImGui.Text(ctx, "No regions in this project. Create some with the tuning panel.")
+        if ImGui.Button(ctx, "Clear this name") then clear_row(row) end
+        if row.cleared then ImGui.Text(ctx, "(will be cleared on Apply)") end
+      elseif #rows == 0 then
+        ImGui.Text(ctx, "No regions in this project.")
+        ImGui.Text(ctx, "Create some with the tuning panel.")
       else
         ImGui.Text(ctx, "No regions match the current filters.")
       end
+      ImGui.EndChild(ctx)
     end
 
     ImGui.Separator(ctx)
@@ -289,34 +327,6 @@ local function frame()
     end
     ImGui.SameLine(ctx)
     if ImGui.Button(ctx, "Stop") then reaper.OnStopButton() end
-
-    ImGui.Separator(ctx)
-
-    if ImGui.BeginChild(ctx, "rows", 0, 0) then
-      for i, r in ipairs(view) do
-        local marker = (i == selected) and ">" or " "
-        -- A region carrying the tuner's "Take 3" placeholder has a name but no
-        -- song. Show what is actually in the project, but never let it read as
-        -- named -- the whole job here is telling those two apart at a glance.
-        local shown
-        if r.song then
-          shown = naming.region_name(r)
-        elseif r.cleared then
-          shown = "-- to be cleared --"
-        elseif r.original and r.original ~= "" then
-          shown = "? " .. r.original
-        else
-          shown = "? (unnamed)"
-        end
-        if ImGui.Selectable(ctx, string.format("%s %2d  %9s  %6.0fs  %s",
-          marker, i, mmss(r.start), r.stop - r.start, shown), i == selected) then
-          selected = i
-          query = ""
-          seek_and_play(r)
-        end
-      end
-      ImGui.EndChild(ctx)
-    end
 
     ImGui.End(ctx)
   end
