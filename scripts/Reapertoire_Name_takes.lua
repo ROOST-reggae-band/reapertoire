@@ -139,13 +139,25 @@ local function seek_and_play(row)
   if not playing then reaper.OnPlayButton() end
 end
 
+-- Clearing is explicit rather than implied by an absent song: a region the
+-- tuner named "Take 3" and nobody has touched should keep that name, while one
+-- the operator deliberately cleared should lose it.
+local function clear_row(row)
+  row.song = nil
+  row.note = nil
+  row.cleared = true
+  naming.renumber(view)
+end
+
 local function apply_names()
   local written = 0
   for _, row in ipairs(view) do
     local name = naming.region_name(row)
+    if row.cleared and not name then name = "" end
     if name and name ~= row.original then
       if regions.rename(row.guid, name) then
         row.original = name
+        row.cleared = nil
         written = written + 1
       end
     end
@@ -206,6 +218,7 @@ local function frame()
         or ImGui.IsKeyPressed(ctx, KEY.Key_KeypadEnter) then
         if hits[1] then
           row.song = hits[1].title
+          row.cleared = nil
           naming.renumber(view)
           query = ""
           local next_row = unnamed_after(selected + 1)
@@ -222,6 +235,7 @@ local function frame()
         local marker = (i == 1) and "> " or "  "
         if ImGui.Selectable(ctx, marker .. song.title, i == 1) then
           row.song = song.title
+          row.cleared = nil
           naming.renumber(view)
           query = ""
         end
@@ -231,10 +245,15 @@ local function frame()
         if ImGui.Button(ctx, 'Add "' .. query .. '" as a new song') then
           local added = songs_lib.add(songs, query)
           row.song = added.title
+          row.cleared = nil
           naming.renumber(view)
           query = ""
         end
       end
+
+      if ImGui.Button(ctx, "Clear this name") then clear_row(row) end
+      ImGui.SameLine(ctx)
+      ImGui.Text(ctx, row.cleared and "(will be cleared on Apply)" or "")
 
       local note_changed, note = ImGui.InputText(ctx, "note (blank = take number)",
         row.note or "")
@@ -265,7 +284,8 @@ local function frame()
     if ImGui.BeginChild(ctx, "rows", 0, 0) then
       for i, r in ipairs(view) do
         local marker = (i == selected) and ">" or " "
-        local shown = naming.region_name(r) or "(unnamed)"
+        local shown = naming.region_name(r)
+          or (r.cleared and "(cleared)" or (r.original ~= "" and r.original or "(unnamed)"))
         if ImGui.Selectable(ctx, string.format("%s %2d  %9s  %6.0fs  %s",
           marker, i, mmss(r.start), r.stop - r.start, shown), i == selected) then
           selected = i
