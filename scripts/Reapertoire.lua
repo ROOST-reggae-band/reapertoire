@@ -16,6 +16,7 @@ local ITEMS = {
   { label = "Render named takes",                file = "scripts/Reapertoire_Render.lua" },
   { label = "Analyse (dry run, writes nothing)", file = "scripts/Reapertoire_Analyze_dryrun.lua" },
   { label = "Capture tuning fixture",            file = "tools/capture_fixture.lua" },
+  { label = "Show render settings",              file = "tools/probe_render.lua" },
 }
 
 local labels = {}
