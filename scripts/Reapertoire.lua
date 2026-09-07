@@ -13,6 +13,7 @@ local repo_dir = script_path:match("^(.*)[/\\]scripts[/\\][^/\\]*$")
 local ITEMS = {
   { label = "Tune takes and create regions",     file = "scripts/Reapertoire_Tune_takes.lua" },
   { label = "Name takes",                        file = "scripts/Reapertoire_Name_takes.lua" },
+  { label = "Render named takes",                file = "scripts/Reapertoire_Render.lua" },
   { label = "Analyse (dry run, writes nothing)", file = "scripts/Reapertoire_Analyze_dryrun.lua" },
   { label = "Capture tuning fixture",            file = "tools/capture_fixture.lua" },
 }

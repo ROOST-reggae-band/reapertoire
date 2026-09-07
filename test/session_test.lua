@@ -123,4 +123,25 @@ function T.merged_takes_stay_in_timeline_order()
   h.assert_eq(s.takes[2].clientRef, "g2")
 end
 
+function T.reads_the_recording_date_out_of_a_reaper_filename()
+  local date, time = session.date_from_filename("26-Organ-260528_2125.wav")
+  h.assert_eq(date, "2026-05-28")
+  h.assert_eq(time, "21:25")
+end
+
+function T.the_date_survives_a_full_path()
+  local date = session.date_from_filename("/Volumes/X/Media/27-Sax-260528_2125.wav")
+  h.assert_eq(date, "2026-05-28")
+end
+
+function T.a_filename_without_a_timestamp_yields_nothing()
+  h.assert_eq(session.date_from_filename("bounce.wav"), nil)
+  h.assert_eq(session.date_from_filename(nil), nil)
+end
+
+function T.an_impossible_date_is_rejected_rather_than_believed()
+  -- Otherwise a track called "Kick 991399_9999" would set the session date.
+  h.assert_eq(session.date_from_filename("x-991399_9999.wav"), nil)
+end
+
 return T

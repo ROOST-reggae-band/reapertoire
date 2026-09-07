@@ -19,10 +19,52 @@ function M.empty()
 end
 
 function M.decode(raw)
-  if not raw or raw == "" then return M.empty() end
+  if not raw or raw == "" then -- Recording date from a source filename.
+--
+-- REAPER's recorded filenames carry YYMMDD_HHMM, which is a better date source
+-- than the file's mtime: it survives the file being copied, moved between
+-- drives, or restored from a backup, all of which reset mtime.
+function M.date_from_filename(name)
+  if not name then return nil end
+  local base = name:match("([^/\\]+)$") or name
+  local y, mo, d, hh, mm = base:match("(%d%d)(%d%d)(%d%d)_(%d%d)(%d%d)")
+  if not y then return nil end
+  local year = 2000 + tonumber(y)
+  local month, day = tonumber(mo), tonumber(d)
+  local hour, minute = tonumber(hh), tonumber(mm)
+  if month < 1 or month > 12 or day < 1 or day > 31
+    or hour > 23 or minute > 59 then
+    return nil
+  end
+  return string.format("%04d-%02d-%02d", year, month, day),
+         string.format("%02d:%02d", hour, minute)
+end
+
+return M.empty() end
   local parsed = json.decode(raw)
   if type(parsed) ~= "table" or type(parsed.sessions) ~= "table" then
-    return M.empty()
+    -- Recording date from a source filename.
+--
+-- REAPER's recorded filenames carry YYMMDD_HHMM, which is a better date source
+-- than the file's mtime: it survives the file being copied, moved between
+-- drives, or restored from a backup, all of which reset mtime.
+function M.date_from_filename(name)
+  if not name then return nil end
+  local base = name:match("([^/\\]+)$") or name
+  local y, mo, d, hh, mm = base:match("(%d%d)(%d%d)(%d%d)_(%d%d)(%d%d)")
+  if not y then return nil end
+  local year = 2000 + tonumber(y)
+  local month, day = tonumber(mo), tonumber(d)
+  local hour, minute = tonumber(hh), tonumber(mm)
+  if month < 1 or month > 12 or day < 1 or day > 31
+    or hour > 23 or minute > 59 then
+    return nil
+  end
+  return string.format("%04d-%02d-%02d", year, month, day),
+         string.format("%02d:%02d", hour, minute)
+end
+
+return M.empty()
   end
   parsed.schema = parsed.schema or M.SCHEMA
   return parsed
@@ -101,6 +143,27 @@ function M.merge_takes(session, takes)
   end
   table.sort(session.takes, function(a, b) return (a.start or 0) < (b.start or 0) end)
   return session.takes
+end
+
+-- Recording date from a source filename.
+--
+-- REAPER's recorded filenames carry YYMMDD_HHMM, which is a better date source
+-- than the file's mtime: it survives the file being copied, moved between
+-- drives, or restored from a backup, all of which reset mtime.
+function M.date_from_filename(name)
+  if not name then return nil end
+  local base = name:match("([^/\\]+)$") or name
+  local y, mo, d, hh, mm = base:match("(%d%d)(%d%d)(%d%d)_(%d%d)(%d%d)")
+  if not y then return nil end
+  local year = 2000 + tonumber(y)
+  local month, day = tonumber(mo), tonumber(d)
+  local hour, minute = tonumber(hh), tonumber(mm)
+  if month < 1 or month > 12 or day < 1 or day > 31
+    or hour > 23 or minute > 59 then
+    return nil
+  end
+  return string.format("%04d-%02d-%02d", year, month, day),
+         string.format("%02d:%02d", hour, minute)
 end
 
 return M
