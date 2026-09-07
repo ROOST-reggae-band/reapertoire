@@ -15,6 +15,8 @@ package.path = repo_dir .. "/?.lua;" .. repo_dir .. "/?/init.lua;" .. package.pa
 
 local adapter = require("adapters.reaper_api")
 local regions = require("adapters.regions")
+local render = require("adapters.render")
+local recognise = require("adapters.recognise")
 local config = require("lib.config")
 local songs_lib = require("lib.songs")
 local naming = require("lib.naming")
@@ -71,6 +73,11 @@ local view = {}          -- the filtered subset actually shown
 local selected = 1       -- indexes `view`, not `rows`
 local limit_to_selection = true
 local only_ours = false
+
+-- Recognition runs once when the panel opens, blocking. The message is drawn a
+-- frame first so the window does not simply appear frozen.
+local recognising = nil        -- nil = not started, true = due, false = done
+local recognise_note = ""
 local query = ""
 local status = ""
 local focus_filter = false
@@ -156,6 +163,45 @@ local function placeholder_name(index)
   return string.format("Take %d", index)
 end
 
+-- Ranks the repertoire against every take that has no song yet, and hangs the
+-- guesses on the rows. Guesses only ever populate the field: nothing downstream
+-- reads them, and none is ever accepted automatically -- a wrong label is worse
+-- than no label, because it becomes an alias that poisons future matching.
+local function run_recognition()
+  if not recognise.available(repo_dir) then
+    recognise_note = "Recognition is not set up. Run ./bin/setup-recognise."
+    return
+  end
+
+  local pending = {}
+  for i, row in ipairs(view) do
+    if not row.song then
+      pending[#pending + 1] = { key = i, start = row.start, stop = row.stop }
+    end
+  end
+  if #pending == 0 then
+    recognise_note = ""
+    return
+  end
+
+  local references = config.expand_path(cfg.sessionsRoot) .. "/" .. recognise.REFERENCES
+  local dir, paths = recognise.render_probes(render, pending, 40)
+  local ranked = recognise.match(repo_dir, references, paths)
+  recognise.remove_probes(dir)
+
+  local guessed = 0
+  for key, results in pairs(ranked) do
+    local row = view[key]
+    if row and #results > 0 then
+      row.guesses = results
+      guessed = guessed + 1
+    end
+  end
+
+  recognise_note = string.format("Suggested songs for %d of %d unnamed takes",
+    guessed, #pending)
+end
+
 local function apply_names()
   local written = 0
   for i, row in ipairs(view) do
@@ -193,6 +239,11 @@ local function frame()
   if visible then
     rebuild_view()
 
+    if recognising == true then
+      recognising = false
+      run_recognition()
+    end
+
     local named = 0
     for _, r in ipairs(view) do if r.song then named = named + 1 end end
     ImGui.Text(ctx, string.format("%d of %d regions shown - %d named, %d to go",
@@ -210,6 +261,19 @@ local function frame()
     end
 
     if status ~= "" then ImGui.Text(ctx, status) end
+    if recognise_note ~= "" then ImGui.Text(ctx, recognise_note) end
+
+    if recognising == nil then
+      local unnamed = 0
+      for _, r in ipairs(view) do if not r.song then unnamed = unnamed + 1 end end
+      if unnamed > 0 then
+        ImGui.Text(ctx, string.format("Recognising %d takes...", unnamed))
+        recognising = true
+      else
+        recognising = false
+      end
+    end
+
     ImGui.Separator(ctx)
 
     -- Arrow keys move the selection wherever focus is, so the hands never have
@@ -289,13 +353,31 @@ local function frame()
         local changed, q = ImGui.InputText(ctx, "filter", query)
         if changed then query = q end
 
-        local hits = songs_lib.filter(songs, query)
+        -- With no filter typed, offer the recogniser's ranking instead of the
+        -- whole repertoire. Typing anything overrides it -- the guess is a
+        -- starting point, never a decision.
+        local hits, from_guess = songs_lib.filter(songs, query), false
+        if query == "" and row.guesses and #row.guesses > 0 then
+          local ranked = {}
+          for _, guess in ipairs(row.guesses) do
+            ranked[#ranked + 1] = { title = guess.song, score = guess.score }
+          end
+          hits, from_guess = ranked, true
+        end
+
+        -- Below the floor there is no pre-selection at all: a blank field is
+        -- quicker to deal with than a plausible wrong answer somebody has to
+        -- notice and undo.
+        local floor = cfg.recognition and cfg.recognition.minScore or 0.75
+        local confident = from_guess and hits[1] and (hits[1].score or 0) >= floor
 
         -- Enter accepts the top match and jumps to the next unnamed take: type
         -- two letters, press Enter, repeat.
         if ImGui.IsKeyPressed(ctx, ENUM.Key_Enter)
           or ImGui.IsKeyPressed(ctx, ENUM.Key_KeypadEnter) then
-          if hits[1] then
+          -- Enter takes the top match only when it is either typed or
+          -- confident. An unconfident guess needs a deliberate click.
+          if hits[1] and (not from_guess or confident) then
             row.song = hits[1].title
             row.cleared = nil
             naming.renumber(view)
@@ -311,9 +393,16 @@ local function frame()
 
         -- No cap: the pane scrolls, and a fixed limit silently hid every song
         -- past the tenth whenever the filter was empty.
+        if from_guess then
+          ImGui.Text(ctx, confident and "Suggested:" or "Suggested (low confidence):")
+        end
+
         for i, song in ipairs(hits) do
-          local marker = (i == 1) and "> " or "  "
-          if ImGui.Selectable(ctx, marker .. song.title, i == 1) then
+          local marker = (i == 1 and (not from_guess or confident)) and "> " or "  "
+          local shown = song.score
+            and string.format("%s%s  %.2f", marker, song.title, song.score)
+            or (marker .. song.title)
+          if ImGui.Selectable(ctx, shown, i == 1 and (not from_guess or confident)) then
             row.song = song.title
             row.cleared = nil
             naming.renumber(view)
