@@ -48,7 +48,7 @@
     }
   ],
   "recognition": {
-    "minMargin": 0.02,
+    "minMargin": 0.01,
     "probeFormat": ""
   },
   "ingest": {

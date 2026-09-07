@@ -404,7 +404,7 @@ local function frame()
         -- quicker to deal with than a plausible wrong answer somebody has to
         -- notice and undo.
         -- `or` cannot express a configured zero, so the absence is tested.
-        local margin = 0.02
+        local margin = 0.01
         if cfg.recognition and cfg.recognition.minMargin ~= nil then
           margin = cfg.recognition.minMargin
         end
@@ -442,9 +442,18 @@ local function frame()
 
         for i, song in ipairs(hits) do
           local marker = (i == 1 and (not from_guess or confident)) and "> " or "  "
-          local shown = song.score
-            and string.format("%s%s  %.2f", marker, song.title, song.score)
-            or (marker .. song.title)
+          -- The scores cluster near the top of the range; the GAP to the
+          -- runner-up is what actually says whether a guess can be trusted, so
+          -- it is shown rather than left for the reader to subtract.
+          local shown
+          if song.score and i == 1 and hits[2] and hits[2].score then
+            shown = string.format("%s%s  %.3f  (+%.3f ahead)",
+              marker, song.title, song.score, song.score - hits[2].score)
+          elseif song.score then
+            shown = string.format("%s%s  %.3f", marker, song.title, song.score)
+          else
+            shown = marker .. song.title
+          end
           if ImGui.Selectable(ctx, shown, i == 1 and (not from_guess or confident)) then
             row.song = song.title
             row.cleared = nil

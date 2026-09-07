@@ -194,8 +194,22 @@ Comparison tries half and double time as well as the reported value. A tracker
 reporting 172 where the band feels 86 is a routine octave error, not a different
 song.
 
-**Chroma histogram** — weight 0.90, the heaviest. The harmonic identity of the
-take, and the feature that actually separates songs.
+**Chroma** — the harmonic identity of the take, and the feature that actually
+separates songs. Measured two ways, blended 0.3 averaged to 0.7 sequenced.
+
+The *averaged* histogram is one twelve-element vector for the whole excerpt.
+Robust, but blunt: it throws away the order the chords arrive in, and two tunes
+by one band in the same key average to nearly the same thing.
+
+The *sequence* is the same histogram computed over twenty-four time segments,
+compared by dynamic time warping. DTW rather than a frame-by-frame comparison
+because two takes of a song rarely start at the same point in it -- one at the
+intro, another after a false start, a third at the second verse.
+
+They fail differently, which is why both are kept. Over a real library the
+average alone gives 70% top-1 and 100% top-3; the sequence alone 78% and 89%;
+the blend 74% and 96%. More importantly the blend is the only one whose
+*confidence* means anything -- see below.
 
 Every FFT bin between 55 Hz and 4 kHz is converted to a MIDI note number, folded
 to one of twelve pitch classes, and its energy accumulated. Below 55 Hz is mostly
@@ -218,7 +232,7 @@ so higher is better, and the top three are offered.
 ### Confidence is a margin, not a threshold
 
 A guess is pre-selected only when it beats the runner-up by `minMargin`
-(default 0.02). It is deliberately not an absolute score floor.
+(default 0.01). It is deliberately not an absolute score floor.
 
 Measured by leave-one-out over a real library, every score landed between 0.74
 and 0.99, so any absolute floor pre-selects wrong answers as readily as right
@@ -236,9 +250,15 @@ twenty-three takes whose song had another reference to match against:
 
 | | |
 |---|---|
-| top-1 correct | 14/23 (61%) |
-| top-3 correct | 23/23 (100%) |
-| pre-selected under a 0.02 margin | 3, all correct |
+| top-1 correct | 20/27 (74%) |
+| top-3 correct | 26/27 (96%) |
+| pre-selected under a 0.01 margin | 13, all correct |
+
+The last row matters most. Raw scores cluster between 0.92 and 0.99, so their
+absolute value says almost nothing -- but the gap to the runner-up separates
+cleanly: when the top guess is right the median gap is 0.017, when it is wrong
+0.004, and the wrong ones never exceed 0.009. Half the takes now arrive with a
+pre-selected guess that has never been wrong on this library.
 
 Top-3 is the number that matters for the workflow: the panel offers a short
 list, not a verdict.
