@@ -248,9 +248,9 @@ are offered.
 
 ### Confidence is a relative margin
 
-A guess is pre-selected only when it beats the runner-up by `minMargin`
-(default 0.10), measured as a **fraction of the runner-up's distance** rather
-than as an absolute gap.
+A guess is trusted only when it beats the runner-up by `minMargin` (default
+0.10), measured as a **fraction of the runner-up's distance** rather than as an
+absolute gap.
 
 The distinction is not pedantry. Chroma distances are all small and all similar
 — scores land between 0.92 and 0.99 — so an absolute floor pre-selects wrong
@@ -262,8 +262,19 @@ median of 59%.
 The panel shows this directly, as `Čoudy  62% clear`, because the raw score
 carries almost no information and the lead carries nearly all of it.
 
-Below the margin nothing is pre-selected. A blank field is quicker to deal with
-than a plausible wrong answer somebody has to notice and undo.
+Above the margin the panel **fills the name in by itself**, so a session of
+confidently-recognised takes needs no keystrokes at all. Filled names are marked
+with a `*` in the take list until they are confirmed, changed, or applied —
+being usually right is not the same as being reviewed, and an unchecked name
+should never look identical to one somebody chose.
+
+Below the margin nothing is filled in or pre-selected. A blank field is quicker
+to deal with than a plausible wrong answer somebody has to notice and undo.
+
+The risk this accepts is specific: an auto-filled name gets rendered and indexed,
+so a wrong one becomes a reference that skews later matching. That is why the
+threshold is a measured quantity rather than a guess, and why the mark exists.
+Raise `minMargin` to fill in less; set it above 1.0 to never fill in at all.
 
 ### How well it works
 

@@ -151,6 +151,7 @@ end
 local function clear_row(row)
   row.song = nil
   row.note = nil
+  row.auto = nil
   row.cleared = true
   naming.renumber(view)
 end
@@ -162,10 +163,28 @@ local function placeholder_name(index)
   return string.format("Take %d", index)
 end
 
--- Ranks the repertoire against every take that has no song yet, and hangs the
--- guesses on the rows. Guesses only ever populate the field: nothing downstream
--- reads them, and none is ever accepted automatically -- a wrong label is worse
--- than no label, because it becomes an alias that poisons future matching.
+-- How far clear of the runner-up a guess must be before it is trusted, as a
+-- fraction of the runner-up rather than an absolute gap. See the note at the
+-- suggestion list for why the ratio and not the score.
+-- `or` cannot express a configured zero, so the absence is tested.
+local function min_margin()
+  if cfg.recognition and cfg.recognition.minMargin ~= nil then
+    return cfg.recognition.minMargin
+  end
+  return 0.10
+end
+
+-- Ranks the repertoire against every take that has no song yet, hangs the
+-- guesses on the rows, and fills in the ones it is confident about.
+--
+-- Automatic naming used to be refused outright here, on the grounds that a
+-- wrong label is worse than no label: it gets rendered, indexed, and becomes a
+-- reference that poisons future matching. What changed is that the confidence
+-- is now measured rather than assumed -- over forty-four held-out takes every
+-- guess this far clear of its runner-up was right forty-three times. That is
+-- worth a keystroke each, provided the fill is easy to see and undo, which is
+-- what the `auto` flag is for: filled names are marked in the list until the
+-- operator confirms or changes them.
 local function run_recognition()
   if not recognise.available(repo_dir) then
     recognise_note = "Recognition is not set up. Run ./bin/setup-recognise."
@@ -201,14 +220,24 @@ local function run_recognition()
   local ranked, match_error = recognise.match(repo_dir, references, paths, meta)
   recognise.remove_probes(dir)
 
-  local guessed = 0
+  local guessed, filled = 0, 0
+  local threshold = min_margin()
   for key, results in pairs(ranked) do
     local row = view[key]
     if row and #results > 0 then
       row.guesses = results
       guessed = guessed + 1
+      -- Only rows with no song were probed, so this cannot overwrite a name
+      -- anybody chose. `cleared` is dropped because a filled name is a name.
+      if results[1].margin and results[1].margin >= threshold then
+        row.song = results[1].song
+        row.auto = true
+        row.cleared = nil
+        filled = filled + 1
+      end
     end
   end
+  if filled > 0 then naming.renumber(view) end
 
   if rendered == 0 then
     recognise_note = "No probes rendered"
@@ -219,8 +248,9 @@ local function run_recognition()
       match_error or "the library returned no candidates")
   else
     recognise_note = string.format(
-      "Suggested songs for %d of %d unnamed takes (%.1fs to render probes)",
-      guessed, #pending, elapsed or 0)
+      "Suggested songs for %d of %d unnamed takes, %d filled in automatically"
+      .. " (marked *, %.1fs to render probes)",
+      guessed, #pending, filled, elapsed or 0)
   end
 end
 
@@ -233,6 +263,7 @@ local function apply_names()
       if regions.rename(row, name) then
         row.original = name
         row.cleared = nil
+        row.auto = nil
         written = written + 1
       else
         -- Silently not incrementing left the operator believing a rename
@@ -325,7 +356,11 @@ local function frame()
         local marker = (i == selected) and ">" or " "
         local shown
         if r.song then
-          shown = naming.region_name(r)
+          -- A star flags a name nobody has looked at yet. The fill is right far
+          -- more often than not, so the mark is a prompt to skim rather than a
+          -- warning -- but an unreviewed name should never be indistinguishable
+          -- from one somebody chose.
+          shown = (r.auto and "* " or "") .. naming.region_name(r)
         elseif r.cleared then
           shown = "-> " .. placeholder_name(i)
         elseif r.original and r.original ~= "" then
@@ -374,6 +409,11 @@ local function frame()
     if ImGui.BeginChild(ctx, "detail", 0, -34) then
       if row then
         ImGui.Text(ctx, string.format("Take %d of %d", selected, #view))
+        if row.auto then
+          ImGui.Text(ctx, string.format(
+            "* filled in automatically as \"%s\" -- Enter or click to confirm",
+            row.song))
+        end
         ImGui.Text(ctx, string.format("%s   %.0f s", mmss(row.start), row.stop - row.start))
         ImGui.Text(ctx, row.song or "(no song yet)")
         ImGui.Separator(ctx)
@@ -403,17 +443,13 @@ local function frame()
         -- as `margin`; over held-out takes every correct call led by at least
         -- 11%, and the default sits just under that.
         --
-        -- Below the margin nothing is pre-selected at all: a blank field is
+        -- The same threshold that decides whether recognition fills the name in
+        -- by itself. Below it nothing is pre-selected at all: a blank field is
         -- quicker to deal with than a plausible wrong answer somebody has to
         -- notice and undo.
-        -- `or` cannot express a configured zero, so the absence is tested.
-        local margin = 0.10
-        if cfg.recognition and cfg.recognition.minMargin ~= nil then
-          margin = cfg.recognition.minMargin
-        end
         local confident = false
         if from_guess and hits[1] and hits[1].margin then
-          confident = hits[1].margin >= margin
+          confident = hits[1].margin >= min_margin()
         end
 
         -- Enter accepts the top match and jumps to the next unnamed take: type
@@ -425,6 +461,7 @@ local function frame()
           if hits[1] and (not from_guess or confident) then
             row.song = hits[1].title
             row.cleared = nil
+            row.auto = nil
             naming.renumber(view)
             query = ""
             local next_row = unnamed_after(selected + 1)
@@ -459,6 +496,7 @@ local function frame()
           if ImGui.Selectable(ctx, shown, i == 1 and (not from_guess or confident)) then
             row.song = song.title
             row.cleared = nil
+            row.auto = nil
             naming.renumber(view)
             query = ""
           end
@@ -468,6 +506,7 @@ local function frame()
           if ImGui.Button(ctx, 'Add "' .. query .. '" as a new song') then
             local added = songs_lib.add(songs, query)
             row.song = added.title
+            row.auto = nil
             row.cleared = nil
             naming.renumber(view)
             query = ""
