@@ -48,6 +48,6 @@
     }
   ],
   "recognition": {
-    "minMargin": 0.05
+    "minMargin": 0.08
   }
 }

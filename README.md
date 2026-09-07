@@ -178,7 +178,7 @@ so higher is better, and the top three are offered.
 ### Confidence is a margin, not a threshold
 
 A guess is pre-selected only when it beats the runner-up by `minMargin`
-(default 0.05). It is deliberately not an absolute score floor.
+(default 0.08). It is deliberately not an absolute score floor.
 
 Measured by leave-one-out over a real library, every score landed between 0.74
 and 0.99, so any absolute floor pre-selects wrong answers as readily as right
@@ -196,9 +196,23 @@ takes whose song had another reference to match against:
 
 | | |
 |---|---|
-| top-1 correct | 5/9 |
+| top-1 correct | 6/9 |
 | top-3 correct | 9/9 |
-| pre-selected under a 0.05 margin | 2, both correct |
+| pre-selected under a 0.08 margin | 4, all correct |
+
+Feature separation over the same library, which is what the weights are
+calibrated against rather than fitted to:
+
+| feature | same-song gap | different-song gap | separation |
+|---|---|---|---|
+| tempo | 0.97 BPM | 11.99 BPM | 1.39 |
+| chroma | 0.06 | 0.07 | 0.60 |
+| duration | 65.5 s | 66.5 s | 0.02 |
+
+Two takes of one song land within about a beat per minute of each other, which
+is why tempo carries the most weight. Duration separates nothing at all and is
+kept only as a faint tiebreak. `tools/recognise/evaluate.py` reruns all of this
+as the library grows.
 
 Top-3 is the number that matters for the workflow, since the panel offers a
 short list rather than a verdict. This is a small sample and the weights have

@@ -395,7 +395,7 @@ local function frame()
         -- Below the margin there is no pre-selection at all: a blank field is
         -- quicker to deal with than a plausible wrong answer somebody has to
         -- notice and undo.
-        local margin = cfg.recognition and cfg.recognition.minMargin or 0.05
+        local margin = cfg.recognition and cfg.recognition.minMargin or 0.08
         local confident = false
         if from_guess and hits[1] then
           local second = hits[2] and hits[2].score or 0
