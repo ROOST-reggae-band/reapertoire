@@ -52,13 +52,44 @@ Song recognition needs its own environment:
 1. **Tune takes and create regions.** Make a time selection over a rehearsal.
    The panel detects takes, shows them live as you drag the thresholds, and
    writes regions when you are happy.
-2. **Name takes.** Arrow between takes — each seeks and plays — type one or two
+2. **Name takes.** Takes the recogniser is confident about arrive already named.
+   For the rest: arrow between takes — each seeks and plays — type one or two
    letters to filter your songs, press Enter to accept and jump to the next
    unnamed one.
 3. **Render named takes.** Produces a master, waveform peaks and per-instrument
    stems for each take, plus a manifest.
 4. **Rebuild recognition references.** Feeds the takes you just named back in,
    so the next session arrives with suggestions. See below.
+
+### Keyboard
+
+Only the naming panel is driven from the keyboard, and it is built so the hands
+never leave the filter box: arrow keys are read wherever focus is, and the box
+takes focus again after every accepted name.
+
+| Key | What it does |
+|---|---|
+| `↑` `↓` | Move between takes. Each move seeks the edit cursor to the take and starts playback if it is stopped, so you hear what you are naming. Clears whatever you had typed. |
+| letters | Filter your songs. Diacritic- and case-insensitive both ways, so `ptacci` finds `Ptáčci` and `PTÁČCI` finds it too. |
+| `Enter` | Accept the top entry, then jump to the next take that still has no song, seek and play it, and put the cursor back in the filter box. Numeric-keypad Enter works the same. |
+| click | Clicking a take in the list selects it and plays it; clicking a song in the suggestion list names the take without moving on. |
+
+`Enter` is the whole workflow: type one or two letters, press it, repeat.
+
+What `Enter` accepts depends on what is on screen. With something typed it takes
+the top filtered song. With nothing typed it takes the recogniser's top guess —
+but only if that guess is confident, since an unconfident one needs a deliberate
+click. Confident guesses are already filled in by the time you arrive, so there
+`Enter` is a confirmation and clears the `*`.
+
+One sharp edge, described as it currently behaves rather than as intended: with
+the filter empty **and** no guess on the take at all — recognition not run, not
+set up, or it found nothing — the unfiltered song list is what is on screen, and
+`Enter` accepts the first song in it. Type a letter first, or run recognition,
+if you are pressing `Enter` on takes the recogniser never saw.
+
+Nothing reaches the project until you press **Apply**, so arrowing around,
+mistyping and renaming cost nothing.
 
 `Analyse (dry run)` reports what detection found without writing anything, and
 `Capture tuning fixture` saves a session's level data so thresholds can be tuned
