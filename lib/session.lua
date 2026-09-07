@@ -123,6 +123,21 @@ function M.date_from_filename(name)
          string.format("%02d:%02d", hour, minute)
 end
 
+-- Whether a stored timestamp already carries a UTC offset.
+function M.has_offset(stamp)
+  if not stamp then return false end
+  return stamp:match("[+%-]%d%d:%d%d$") ~= nil or stamp:match("Z$") ~= nil
+end
+
+-- Adds an offset to a timestamp written before offsets were recorded, reading
+-- the date and time already stored rather than inventing new ones.
+function M.with_offset(stamp)
+  if not stamp or M.has_offset(stamp) then return stamp end
+  local date, time_of_day = stamp:match("^(%d%d%d%d%-%d%d%-%d%d)T(%d%d:%d%d)")
+  if not date then return stamp end
+  return M.iso8601(date, time_of_day) or stamp
+end
+
 -- ISO-8601 with an offset, which the ingest contract requires: without one the
 -- server cannot know what instant "20:48" meant. The offset is asked of the
 -- session's own date rather than today's, so a summer rehearsal filed in winter

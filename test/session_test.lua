@@ -171,4 +171,26 @@ function T.the_offset_is_for_the_sessions_own_date()
   end
 end
 
+function T.recognises_a_timestamp_that_already_has_an_offset()
+  h.assert_eq(session.has_offset("2026-09-05T19:30:00+02:00"), true)
+  h.assert_eq(session.has_offset("2026-09-05T19:30:00Z"), true)
+  h.assert_eq(session.has_offset("2026-09-05T19:30:00"), false)
+  h.assert_eq(session.has_offset(nil), false)
+end
+
+function T.upgrades_a_stored_timestamp_that_predates_offsets()
+  local upgraded = session.with_offset("2025-12-04T20:48:00")
+  assert(upgraded:match("^2025%-12%-04T20:48:00[+%-]%d%d:%d%d$"), upgraded)
+end
+
+function T.upgrading_leaves_an_already_offset_timestamp_alone()
+  local already = "2026-09-05T19:30:00+02:00"
+  h.assert_eq(session.with_offset(already), already)
+end
+
+function T.upgrading_something_unparseable_returns_it_unchanged()
+  h.assert_eq(session.with_offset("whenever"), "whenever")
+  h.assert_eq(session.with_offset(nil), nil)
+end
+
 return T

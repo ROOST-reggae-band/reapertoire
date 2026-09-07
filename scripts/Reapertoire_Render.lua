@@ -120,6 +120,9 @@ if how == "new" then
 else
   session.range.start = math.min(session.range.start, sel_start)
   session.range.stop = math.max(session.range.stop, sel_stop)
+  -- Sessions recorded before offsets were written get one now, from the date
+  -- already stored rather than from today.
+  session.heldAt = session_lib.with_offset(session.heldAt)
 end
 
 -- --------------------------------------------------------------- the takes
