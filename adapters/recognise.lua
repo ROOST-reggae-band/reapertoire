@@ -22,9 +22,12 @@ function M.available(repo_dir)
   return true
 end
 
+-- stderr is folded into the output rather than discarded: a swallowed error
+-- here is indistinguishable from the recogniser simply finding nothing, which
+-- is the least useful failure mode available.
 local function run(command)
-  local pipe = io.popen(command .. " 2>/dev/null")
-  if not pipe then return nil end
+  local pipe = io.popen(command .. " 2>&1")
+  if not pipe then return nil, "io.popen is unavailable" end
   local out = pipe:read("*a")
   pipe:close()
   return out
@@ -87,15 +90,24 @@ function M.match(repo_dir, references_path, paths)
   f:write(json.encode({ takes = takes }))
   f:close()
 
-  local out = run(string.format(
+  local command = string.format(
     "%q %q match --refs %q --input %q",
     python(repo_dir), repo_dir .. "/tools/recognise/recognise.py",
-    references_path, input_path))
+    references_path, input_path)
+  local out, popen_error = run(command)
   os.remove(input_path)
 
-  if not out or out == "" then return {} end
-  local parsed = json.decode(out)
-  if type(parsed) ~= "table" or type(parsed.results) ~= "table" then return {} end
+  if not out or out == "" then
+    return {}, popen_error or "the recogniser produced no output"
+  end
+
+  -- The result is the last line: anything the interpreter or ffmpeg printed
+  -- along the way comes first and is not JSON.
+  local last = out:match("[^\r\n]+%s*$") or out
+  local parsed = json.decode(last)
+  if type(parsed) ~= "table" or type(parsed.results) ~= "table" then
+    return {}, out:gsub("%s+$", ""):sub(-200)
+  end
 
   local results = {}
   for key, ranked in pairs(parsed.results) do

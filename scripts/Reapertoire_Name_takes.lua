@@ -198,7 +198,7 @@ local function run_recognition()
   local rendered = 0
   for _ in pairs(paths) do rendered = rendered + 1 end
 
-  local ranked = recognise.match(repo_dir, references, paths)
+  local ranked, match_error = recognise.match(repo_dir, references, paths)
   recognise.remove_probes(dir)
 
   local guessed = 0
@@ -215,7 +215,8 @@ local function run_recognition()
       .. (failures[1] and (": " .. failures[1]) or "")
   elseif guessed == 0 then
     recognise_note = string.format(
-      "Rendered %d probes but the matcher returned nothing", rendered)
+      "Rendered %d probes, no match: %s", rendered,
+      match_error or "the library returned no candidates")
   else
     recognise_note = string.format("Suggested songs for %d of %d unnamed takes",
       guessed, #pending)
