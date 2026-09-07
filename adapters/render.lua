@@ -113,6 +113,20 @@ function M.stems(dir, tracks, start_time, stop_time, log)
     return {}, {}, "no render format configured in this project"
   end
 
+  -- Start from an empty directory. A previous run's stems linger otherwise,
+  -- and a slug that disappears from the mapping would leave a stale file
+  -- claiming to be part of this take.
+  do
+    local existing, idx = {}, 0
+    while true do
+      local name = reaper.EnumerateFiles(dir, idx)
+      if not name then break end
+      existing[#existing + 1] = dir .. "/" .. name
+      idx = idx + 1
+    end
+    for _, path in ipairs(existing) do os.remove(path) end
+  end
+
   local saved = snapshot()
 
   -- Track selection is the operator's, so it is restored along with everything
