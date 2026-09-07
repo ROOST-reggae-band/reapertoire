@@ -235,7 +235,12 @@ from the command line against captured fixtures, and it is why threshold tuning
 is a sub-second loop rather than a click-and-squint cycle inside a DAW.
 `adapters/` is the only place REAPER is touched, and `scripts/` are thin actions.
 
-## Third-party
+## Licence
 
-[dkjson](http://dkolf.de/dkjson-lua/) by David Heiko Kolf, MIT licensed, is
-vendored at `lib/util/json.lua`.
+MIT — see [LICENSE](LICENSE).
+
+### Third-party
+
+[dkjson](http://dkolf.de/dkjson-lua/) by David Heiko Kolf is vendored at
+`lib/util/json.lua`, under its own MIT licence, whose header is kept intact in
+that file.
