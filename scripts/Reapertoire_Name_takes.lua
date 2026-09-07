@@ -219,7 +219,8 @@ local function frame()
 
     -- Left: the takes. Right: what to do with the selected one. Reserving the
     -- bottom strip keeps the action buttons on screen however long the list is.
-    if ImGui.BeginChild(ctx, "takes", -360, -34) then
+    ImGui.BeginGroup(ctx)
+    if ImGui.BeginChild(ctx, "takes", -360, -60) then
       for i, r in ipairs(view) do
         local marker = (i == selected) and ">" or " "
         local shown
@@ -243,9 +244,18 @@ local function frame()
       end
       ImGui.EndChild(ctx)
     end
+    if row then
+      if ImGui.Button(ctx, "Clear this name") then clear_row(row) end
+      if row.cleared then
+        ImGui.SameLine(ctx)
+        ImGui.Text(ctx, "(cleared on Apply)")
+      end
+    end
+    ImGui.EndGroup(ctx)
 
     ImGui.SameLine(ctx)
 
+    ImGui.BeginGroup(ctx)
     if ImGui.BeginChild(ctx, "detail", 0, -34) then
       if row then
         ImGui.Text(ctx, string.format("Take %d of %d", selected, #view))
@@ -306,9 +316,6 @@ local function frame()
           naming.renumber(view)
         end
         ImGui.Text(ctx, "blank = take number")
-
-        if ImGui.Button(ctx, "Clear this name") then clear_row(row) end
-        if row.cleared then ImGui.Text(ctx, "(will be cleared on Apply)") end
       elseif #rows == 0 then
         ImGui.Text(ctx, "No regions in this project.")
         ImGui.Text(ctx, "Create some with the tuning panel.")
@@ -317,12 +324,14 @@ local function frame()
       end
       ImGui.EndChild(ctx)
     end
+    ImGui.EndGroup(ctx)
 
+    -- Clear sits with the list because it acts on the selected row. These act
+    -- on the whole panel, so they get their own bar across the bottom.
     ImGui.Separator(ctx)
-
     if ImGui.Button(ctx, "Apply names to regions") then apply_names() end
     ImGui.SameLine(ctx)
-    if ImGui.Button(ctx, "Reload regions") then
+    if ImGui.Button(ctx, "Reload") then
       load_rows(); rebuild_view(); status = "Reloaded"
     end
     ImGui.SameLine(ctx)
