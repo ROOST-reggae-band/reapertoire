@@ -155,18 +155,24 @@ local function apply_names()
     local name = naming.region_name(row)
     if row.cleared and not name then name = "" end
     if name and name ~= row.original then
-      if regions.rename(row.guid, name) then
+      if regions.rename(row, name) then
         row.original = name
         row.cleared = nil
         written = written + 1
       end
     end
   end
-  status = string.format("Renamed %d region%s", written, written == 1 and "" or "s")
+  if written == 0 then
+    status = "Nothing to write - no name differed from what the region already has"
+  else
+    status = string.format("Renamed %d region%s", written, written == 1 and "" or "s")
+  end
 end
 
 load_rows()
 rebuild_view()
+
+local guids_ok = regions.guids_available()
 
 -- ---------------------------------------------------------------------- loop
 
@@ -187,6 +193,11 @@ local function frame()
     ImGui.SameLine(ctx)
     local c2, v2 = ImGui.Checkbox(ctx, "only regions I created", only_ours)
     if c2 then only_ours = v2; selected = 1 end
+    if not guids_ok then
+      ImGui.Text(ctx,
+        "This project does not answer region GUID lookups, so \"only regions I "
+        .. "created\" cannot tell them apart. Renaming is unaffected.")
+    end
 
     if status ~= "" then ImGui.Text(ctx, status) end
     ImGui.Separator(ctx)
@@ -284,8 +295,19 @@ local function frame()
     if ImGui.BeginChild(ctx, "rows", 0, 0) then
       for i, r in ipairs(view) do
         local marker = (i == selected) and ">" or " "
-        local shown = naming.region_name(r)
-          or (r.cleared and "(cleared)" or (r.original ~= "" and r.original or "(unnamed)"))
+        -- A region carrying the tuner's "Take 3" placeholder has a name but no
+        -- song. Show what is actually in the project, but never let it read as
+        -- named -- the whole job here is telling those two apart at a glance.
+        local shown
+        if r.song then
+          shown = naming.region_name(r)
+        elseif r.cleared then
+          shown = "-- to be cleared --"
+        elseif r.original and r.original ~= "" then
+          shown = "? " .. r.original
+        else
+          shown = "? (unnamed)"
+        end
         if ImGui.Selectable(ctx, string.format("%s %2d  %9s  %6.0fs  %s",
           marker, i, mmss(r.start), r.stop - r.start, shown), i == selected) then
           selected = i

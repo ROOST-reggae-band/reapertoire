@@ -160,13 +160,20 @@ function M.all()
   return out
 end
 
--- Renames one region, found by GUID so it survives regions being added or
--- removed between reading and writing. Position and extent are preserved.
-function M.rename(guid, new_name)
-  if not guid then return false end
+-- Renames one region. Matched by GUID when the project supplies one, and by
+-- region number plus start position otherwise -- MARKER_GUID is documented as
+-- discouraged and does not answer in every project, so it cannot be the only
+-- way to find a region again.
+function M.rename(row, new_name)
   local done = false
   each_region(function(enum_index, num, pos, rgnend)
-    if guid_at(enum_index) == guid then
+    local hit
+    if row.guid then
+      hit = guid_at(enum_index) == row.guid
+    else
+      hit = num == row.num and math.abs(pos - row.start) < 1e-6
+    end
+    if hit then
       reaper.SetProjectMarker(num, true, pos, rgnend, new_name)
       done = true
       return false
@@ -174,6 +181,17 @@ function M.rename(guid, new_name)
   end)
   if done then reaper.UpdateArrange() end
   return done
+end
+
+-- Whether this project answers GUID lookups at all. Ownership tracking depends
+-- on it; renaming does not.
+function M.guids_available()
+  local answered = false
+  each_region(function(enum_index)
+    if guid_at(enum_index) then answered = true end
+    return false
+  end)
+  return answered
 end
 
 -- How many regions this tool currently believes it owns.
