@@ -320,10 +320,15 @@ end
 
 -- ------------------------------------------------------------ the manifest
 
-local manifest = manifest_lib.build(session, rendered)
-local problems = manifest_lib.problems(manifest)
-
 local manifest_path = out_dir .. "/manifest.json"
+
+-- Merged into whatever this session already recorded, so rendering part of a
+-- rehearsal does not drop the rest of it.
+local existing = adapter.read_file(manifest_path)
+local manifest = manifest_lib.merge(
+  existing and json.decode(existing) or nil,
+  manifest_lib.build(session, rendered))
+local problems = manifest_lib.problems(manifest)
 local f = io.open(manifest_path, "w")
 if f then
   f:write(json.encode(manifest, { indent = true }))

@@ -96,7 +96,7 @@ function M.match(repo_dir, references_path, paths, meta)
 
   local input_path = string.format("%s/reapertoire-match-%d.json", temp_dir(), os.time())
   local f = io.open(input_path, "w")
-  if not f then return {} end
+  if not f then return {}, "could not write " .. input_path end
   f:write(json.encode({ takes = takes }))
   f:close()
 
@@ -134,8 +134,12 @@ function M.index(repo_dir, sessions_root, references_path)
     python(repo_dir), repo_dir .. "/tools/recognise/recognise.py",
     sessions_root, references_path))
   if not out or out == "" then return nil, "the recogniser produced no output" end
-  local parsed = json.decode(out)
-  if type(parsed) ~= "table" then return nil, "unexpected output: " .. out:sub(1, 120) end
+  -- Last line, as in match: the tool reports progress before its JSON summary.
+  local last = out:match("[^\r\n]+%s*$") or out
+  local parsed = json.decode(last)
+  if type(parsed) ~= "table" then
+    return nil, "unexpected output: " .. out:gsub("%s+$", ""):sub(-160)
+  end
   return parsed
 end
 

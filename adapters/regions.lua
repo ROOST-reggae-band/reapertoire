@@ -48,8 +48,14 @@ local function save_owned(list)
   reaper.SetProjExtState(0, EXT_SECTION, EXT_KEY, table.concat(list, ","))
 end
 
--- Removes every region this tool previously created. Returns how many went.
-function M.clear(undo_label)
+-- Removes the regions this tool created, optionally only those inside a time
+-- range.
+--
+-- The range matters: one project holds many rehearsals, and the ownership list
+-- is project-wide. Clearing all of it while re-tuning one rehearsal would
+-- delete every named region of every other rehearsal in the file -- and a
+-- named region is still an owned one, because renaming preserves its GUID.
+function M.clear(undo_label, from, to)
   local owned = load_owned()
   if next(owned) == nil then
     reaper.SetProjExtState(0, EXT_SECTION, EXT_KEY, "")
@@ -61,17 +67,29 @@ function M.clear(undo_label)
 
   -- Collect first, delete after: deleting while enumerating shifts the indices
   -- underneath the enumeration.
-  local doomed = {}
-  each_region(function(enum_index, num)
+  local doomed, kept = {}, {}
+  each_region(function(enum_index, num, pos, rgnend)
     local guid = guid_at(enum_index)
-    if guid and owned[guid] then doomed[#doomed + 1] = num end
+    if guid and owned[guid] then
+      local in_range = true
+      if from and to then
+        in_range = pos < to and from < rgnend
+      end
+      if in_range then
+        doomed[#doomed + 1] = num
+      else
+        kept[#kept + 1] = guid
+      end
+    end
   end)
 
   for i = #doomed, 1, -1 do
     reaper.DeleteProjectMarker(0, doomed[i], true)
   end
 
-  reaper.SetProjExtState(0, EXT_SECTION, EXT_KEY, "")
+  -- Ownership of regions outside the range is carried forward, or the next
+  -- clear would not know about them and they would become unmanaged.
+  save_owned(kept)
   reaper.PreventUIRefresh(-1)
   reaper.UpdateArrange()
   reaper.Undo_EndBlock(undo_label or "Reapertoire: clear regions", -1)
@@ -100,11 +118,12 @@ end
 -- `name_of(take, index)` supplies each name.
 --
 -- Returns created count and a list of { index, take, clash } for those skipped.
-function M.replace(takes, name_of, color)
+function M.replace(takes, name_of, color, from, to)
   -- Clear first, so this tool's own regions from a previous tuning pass are
   -- gone before overlaps are measured -- otherwise every take would collide
-  -- with its own predecessor.
-  M.clear("Reapertoire: replace regions")
+  -- with its own predecessor. Scoped to the range being re-tuned, so other
+  -- rehearsals in the same project keep their regions.
+  M.clear("Reapertoire: replace regions", from, to)
   local foreign = M.foreign()
 
   reaper.Undo_BeginBlock()
@@ -130,7 +149,12 @@ function M.replace(takes, name_of, color)
     end
   end
 
-  save_owned(guids)
+  -- Added to what survived the scoped clear, not replacing it.
+  local owned_now = load_owned()
+  local all = {}
+  for guid in pairs(owned_now) do all[#all + 1] = guid end
+  for _, guid in ipairs(guids) do all[#all + 1] = guid end
+  save_owned(all)
 
   reaper.PreventUIRefresh(-1)
   reaper.UpdateArrange()

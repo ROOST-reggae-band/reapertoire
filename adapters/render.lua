@@ -175,7 +175,9 @@ function M.stems(dir, tracks, start_time, stop_time, log)
   local applied = reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false)
   log("      RENDER_SETTINGS=%d (mode bits %d = stems)", applied, applied & MODE_BITS)
 
-  reaper.Main_OnCommand(RENDER_ACTION, 0)
+  -- Whatever this raises, the operator's render settings, track selection and
+  -- master-track selection have to go back.
+  local rendered_ok, render_err = pcall(reaper.Main_OnCommand, RENDER_ACTION, 0)
 
   local produced, idx = {}, 0
   while true do
@@ -191,6 +193,10 @@ function M.stems(dir, tracks, start_time, stop_time, log)
   end
   reaper.SetTrackSelected(master, master_was_selected)
   restore(saved)
+
+  if not rendered_ok then
+    return {}, {}, "stem render failed: " .. tostring(render_err)
+  end
 
   -- Files land under the track's name; the manifest wants the instrument slug,
   -- so each is renamed once found.
@@ -311,17 +317,29 @@ function M.probe_batch(jobs, format)
   reaper.PreventUIRefresh(1)
 
   local paths, failures = {}, {}
-  for _, job in ipairs(jobs) do
-    local path, err = M.probe(job.dir, job.name, job.start, job.stop, format)
-    if path then
-      paths[job.key] = path
-    else
-      failures[#failures + 1] = string.format("take %s: %s", tostring(job.key), tostring(err))
+
+  -- Lua has no finally, and these two must be released whatever happens:
+  -- PreventUIRefresh is refcounted, so an unbalanced increment freezes the
+  -- arrange view for the rest of the session, and restore_fx is the only thing
+  -- that puts the operator's entire FX chain back.
+  local ok, err = pcall(function()
+    for _, job in ipairs(jobs) do
+      local path, reason = M.probe(job.dir, job.name, job.start, job.stop, format)
+      if path then
+        paths[job.key] = path
+      else
+        failures[#failures + 1] =
+          string.format("take %s: %s", tostring(job.key), tostring(reason))
+      end
     end
-  end
+  end)
 
   reaper.PreventUIRefresh(-1)
   restore_fx(fx)
+
+  if not ok then
+    failures[#failures + 1] = "probe rendering failed: " .. tostring(err)
+  end
   return paths, failures
 end
 
@@ -348,12 +366,41 @@ function M.take(dir, filename, start_time, stop_time, settings_mask)
   reaper.GetSetProjectInfo_String(0, "RENDER_FILE", dir, true)
   reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", filename, true)
 
+  -- What is in the directory before the render, so afterwards the new file can
+  -- be told from an old one. Trusting a filename alone returns last month's
+  -- master when the project's format has changed since, and the manifest then
+  -- records that file's bytes and hash against this take's duration.
+  local before, index = {}, 0
+  while true do
+    local name = reaper.EnumerateFiles(dir, index)
+    if not name then break end
+    before[name] = true
+    index = index + 1
+  end
+
   reaper.Main_OnCommand(RENDER_ACTION, 0)
 
   restore(saved)
 
-  -- The extension depends on the configured format, so the file is found by
-  -- looking for what appeared rather than by assuming one.
+  local appeared, listing = {}, 0
+  while true do
+    local name = reaper.EnumerateFiles(dir, listing)
+    if not name then break end
+    if not before[name] then appeared[#appeared + 1] = name end
+    listing = listing + 1
+  end
+
+  -- Prefer a file that was not there before, whatever it is called: REAPER may
+  -- have added a numeric suffix to avoid overwriting.
+  for _, name in ipairs(appeared) do
+    if name:match("^" .. filename:gsub("%W", "%%%0")) then
+      return dir .. "/" .. name
+    end
+  end
+  if #appeared == 1 then return dir .. "/" .. appeared[1] end
+
+  -- Nothing new: the render may have overwritten a file of the same name, so
+  -- fall back to the expected names rather than failing outright.
   local base = dir .. "/" .. filename
   for _, ext in ipairs({ "opus", "ogg", "mp3", "wav", "flac", "m4a", "aiff" }) do
     local candidate = base .. "." .. ext

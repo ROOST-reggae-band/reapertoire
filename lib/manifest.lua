@@ -69,6 +69,39 @@ function M.build(session, takes)
   return out
 end
 
+-- Merges freshly built takes into a manifest already on disk, matched on
+-- clientRef.
+--
+-- Rendering part of a session must not drop the rest of it: the output folder
+-- is per session, so a run covering takes 6-10 would otherwise overwrite the
+-- manifest listing takes 1-5, orphaning their audio and quietly removing them
+-- from the reference library on the next index.
+function M.merge(existing, fresh)
+  if type(existing) ~= "table" or type(existing.takes) ~= "table" then
+    return fresh
+  end
+
+  local merged = {}
+  local at = {}
+  for _, take in ipairs(existing.takes) do
+    merged[#merged + 1] = take
+    if take.clientRef then at[take.clientRef] = #merged end
+  end
+  for _, take in ipairs(fresh.takes) do
+    local index = take.clientRef and at[take.clientRef]
+    if index then
+      merged[index] = take
+    else
+      merged[#merged + 1] = take
+      if take.clientRef then at[take.clientRef] = #merged end
+    end
+  end
+
+  table.sort(merged, function(a, b) return (a.start or 0) < (b.start or 0) end)
+  fresh.takes = merged
+  return fresh
+end
+
 -- Takes that cannot be sent downstream, with the reason. Reporting these beats
 -- writing a manifest that fails validation somewhere else later.
 function M.problems(manifest)

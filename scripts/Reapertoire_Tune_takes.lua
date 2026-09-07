@@ -329,10 +329,11 @@ local function frame()
     end
 
     if ImGui.Button(ctx, "Create regions") then
+      -- Scoped to the selection: other rehearsals in this project keep theirs.
       local made, skipped = regions.replace(
         detected.takes,
         function(_, i) return string.format("Take %d", i) end,
-        0)
+        0, sel_start, sel_stop)
       if #skipped == 0 then
         status = string.format("Wrote %d regions", made)
       else
@@ -347,8 +348,8 @@ local function frame()
     end
     ImGui.SameLine(ctx)
     if ImGui.Button(ctx, "Clear regions") then
-      local gone = regions.clear()
-      status = string.format("Removed %d regions", gone)
+      local gone = regions.clear(nil, sel_start, sel_stop)
+      status = string.format("Removed %d regions in the selection", gone)
       recheck_clashes()
     end
     ImGui.SameLine(ctx)

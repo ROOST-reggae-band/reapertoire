@@ -225,7 +225,7 @@ local function run_recognition()
 end
 
 local function apply_names()
-  local written = 0
+  local written, failed = 0, {}
   for i, row in ipairs(view) do
     local name = naming.region_name(row)
     if row.cleared and not name then name = placeholder_name(i) end
@@ -234,10 +234,17 @@ local function apply_names()
         row.original = name
         row.cleared = nil
         written = written + 1
+      else
+        -- Silently not incrementing left the operator believing a rename
+        -- landed when the region could not be found.
+        failed[#failed + 1] = row.song or "take"
       end
     end
   end
-  if written == 0 then
+  if #failed > 0 then
+    status = string.format("Renamed %d, FAILED %d (%s) -- those regions could not be found",
+      written, #failed, table.concat(failed, ", "))
+  elseif written == 0 then
     status = "Nothing to write - no name differed from what the region already has"
   else
     status = string.format("Renamed %d region%s", written, written == 1 and "" or "s")
@@ -396,7 +403,11 @@ local function frame()
         -- Below the margin there is no pre-selection at all: a blank field is
         -- quicker to deal with than a plausible wrong answer somebody has to
         -- notice and undo.
-        local margin = cfg.recognition and cfg.recognition.minMargin or 0.08
+        -- `or` cannot express a configured zero, so the absence is tested.
+        local margin = 0.02
+        if cfg.recognition and cfg.recognition.minMargin ~= nil then
+          margin = cfg.recognition.minMargin
+        end
         local confident = false
         if from_guess and hits[1] then
           local second = hits[2] and hits[2].score or 0

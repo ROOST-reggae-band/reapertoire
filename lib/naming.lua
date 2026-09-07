@@ -24,21 +24,35 @@ function M.parse(name, songs)
   if not name or name == "" then return nil end
 
   if songs then
-    local best
+    -- The boundary is found in the RAW string, never by slicing at the folded
+    -- title's length. Folding is not length-preserving -- "ř" is two bytes and
+    -- "r" is one -- so a region named PRITEL matching a title spelled Přítel
+    -- would be cut short by one byte per accented character, silently turning
+    -- "take 3" into "ke 3".
+    local best_title, best_label
     for _, song in ipairs(songs) do
       local title = song.title or song
-      local folded_title, folded_name = text.fold(title), text.fold(name)
-      if folded_name == folded_title then
+      local folded_title = text.fold(title)
+
+      if text.fold(name) == folded_title then
         return title, nil
       end
-      if folded_name:sub(1, #folded_title + #SEPARATOR)
-         == folded_title .. SEPARATOR then
-        if not best or #title > #best then best = title end
+
+      -- Try each real separator position and fold what precedes it.
+      local from = 1
+      while true do
+        local at = name:find(SEPARATOR, from, true)
+        if not at then break end
+        if text.fold(name:sub(1, at - 1)) == folded_title then
+          if not best_title or #title > #best_title then
+            best_title, best_label = title, name:sub(at + #SEPARATOR)
+          end
+          break
+        end
+        from = at + 1
       end
     end
-    if best then
-      return best, name:sub(#best + #SEPARATOR + 1)
-    end
+    if best_title then return best_title, best_label end
   end
 
   local last = nil

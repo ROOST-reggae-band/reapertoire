@@ -95,4 +95,28 @@ function T.a_session_missing_its_date_is_reported()
   assert(p[1]:find("no date"), p[1])
 end
 
+function T.merging_keeps_takes_from_an_earlier_run()
+  -- Rendering takes 6-10 of a session must not drop takes 1-5.
+  local first = manifest.build(SESSION, { take({ guid = "{A}", start = 10, stop = 20 }) })
+  local second = manifest.build(SESSION, { take({ guid = "{B}", start = 90, stop = 100 }) })
+  local merged = manifest.merge(first, second)
+  h.assert_eq(#merged.takes, 2)
+  h.assert_eq(merged.takes[1].clientRef, "reaper:region-guid:{A}")
+  h.assert_eq(merged.takes[2].clientRef, "reaper:region-guid:{B}")
+end
+
+function T.merging_replaces_a_take_rendered_again()
+  local first = manifest.build(SESSION, { take({ guid = "{A}", song = "Old" }) })
+  local second = manifest.build(SESSION, { take({ guid = "{A}", song = "Corrected" }) })
+  local merged = manifest.merge(first, second)
+  h.assert_eq(#merged.takes, 1, "same take, not two")
+  h.assert_eq(merged.takes[1].song, "Corrected")
+end
+
+function T.merging_into_nothing_is_the_fresh_manifest()
+  local fresh = manifest.build(SESSION, { take() })
+  h.assert_eq(#manifest.merge(nil, fresh).takes, 1)
+  h.assert_eq(#manifest.merge({}, fresh).takes, 1)
+end
+
 return T

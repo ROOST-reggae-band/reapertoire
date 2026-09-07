@@ -155,4 +155,20 @@ function T.an_unnamed_row_has_no_region_name()
   h.assert_eq(naming.region_name({ start = 10 }), nil)
 end
 
+function T.a_region_spelled_without_diacritics_keeps_its_whole_label()
+  -- The boundary must be found in the raw string. Slicing at the folded
+  -- title's byte length loses one byte per accented character, which turned
+  -- "take 3" into "ke 3" and then wrote that back into the project.
+  local song, label = naming.parse("PRITEL - take 3", SONGS)
+  h.assert_eq(song, "Přítel")
+  h.assert_eq(label, "take 3")
+  h.assert_eq(naming.take_number(label), 3)
+end
+
+function T.a_note_survives_a_title_spelled_without_diacritics()
+  local song, label = naming.parse("Pritel - slow version", SONGS)
+  h.assert_eq(song, "Přítel")
+  h.assert_eq(label, "slow version")
+end
+
 return T

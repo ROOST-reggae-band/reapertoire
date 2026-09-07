@@ -18,4 +18,4 @@ echo "Creating .venv with $($PY -V)"
 "$PY" -m venv .venv
 ./.venv/bin/pip install --quiet --upgrade pip
 ./.venv/bin/pip install --quiet -r tools/recognise/requirements.txt
-echo "Ready: $(./.venv/bin/python -c 'import librosa; print("librosa", librosa.__version__)')"
+echo "Ready: $(./.venv/bin/python -c 'import numpy; print("numpy", numpy.__version__)')"

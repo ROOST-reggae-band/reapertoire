@@ -61,21 +61,29 @@ FFPROBE = _tool("ffprobe")
 # in this repertoire are fixed, which makes it unusually discriminative; chroma
 # carries the harmonic identity; duration is the weakest, since a run-through
 # can be cut short or extended.
-# Measured, not guessed. Over a real library, same-song pairs differed by
-# 0.97 BPM on average against 11.99 between songs -- a separation of 1.39 --
-# while chroma managed 0.06 against 0.07 and duration 65.5 s against 66.5 s.
-# Duration is essentially noise and is kept only as a faint tiebreak.
-WEIGHTS = {"tempo": 0.50, "chroma": 0.45, "duration": 0.05}
+# Measured, not guessed -- and re-measured, which reversed the first answer.
+#
+# On four takes, tempo looked dominant (separation 1.39 against chroma's 0.60).
+# On twenty-seven it is the other way round: chroma 0.97, tempo 0.82, and
+# duration NEGATIVE at -0.37 -- same-song durations differ more than
+# different-song ones, so weighting it actively hurt. The first measurement was
+# small-sample noise.
+#
+# Tempo keeps a small weight rather than none: it is a genuinely independent
+# signal, and at zero the top-3 rate falls. The exact split between 0.05 and
+# 0.15 is within noise on this sample, so a round number is used rather than
+# the grid maximum.
+WEIGHTS = {"tempo": 0.10, "chroma": 0.90, "duration": 0.0}
 
 # Beyond these, a difference tells us nothing more -- two songs a minute apart
 # in length are simply different, and ninety seconds apart is not "more
 # different".
 DURATION_SCALE = 60.0
 
-# Calibrated to those same measurements: at the old scale of 20 a real 12 BPM
-# difference between songs scored only 0.6, squashing the one feature that
-# actually separates them.
-TEMPO_SCALE = 8.0
+# Same-song tempos now spread about 4 BPM against 10 between songs, partly
+# because the estimator octave-flips between takes. A wider scale stops that
+# spread dominating a feature that is only a supporting signal.
+TEMPO_SCALE = 15.0
 
 # Chroma tops out around 5 kHz and tempo needs less still, so a higher rate buys
 # nothing and costs decode time.
@@ -94,7 +102,9 @@ HOP = 256
 # tracker to lock onto half or double time.
 MIN_BPM, MAX_BPM = 60.0, 180.0
 
-SCHEMA = 1
+# Bumped when the stored feature shape changes, so a library written by an
+# older version is rebuilt rather than silently compared against.
+SCHEMA = 2
 
 
 def probe_duration(path):
@@ -157,11 +167,13 @@ def chroma_histogram(spectrum, freqs):
     if total > 0:
         histogram /= total
 
-    # Rotate so the strongest pitch class sits first: the band may play a song
-    # in a different key, or a guitar may be tuned down, and neither makes it a
-    # different song.
+    # Stored unrotated. Key-independence happens at comparison time by taking
+    # the best of all twelve rotations, not by committing to one here: rotating
+    # by argmax is discontinuous, so two takes of the same song whose tonic and
+    # dominant swap rank -- often a percent or two apart -- would produce
+    # completely different vectors.
     root = int(np.argmax(histogram))
-    return np.roll(histogram, -root), root
+    return histogram, root
 
 
 def estimate_tempo(spectrum):
@@ -260,8 +272,12 @@ def distance(a, b):
         gaps = [abs(ta - tb), abs(ta - tb * 2), abs(ta - tb / 2)]
         d_tempo = min(min(gaps) / TEMPO_SCALE, 1.0)
 
+    # Best of the twelve rotations: the band may play a song in a different
+    # key, or a guitar may be tuned down, and neither makes it a different song.
+    # Twelve L2 norms over twelve-element vectors costs nothing.
     ca, cb = np.array(a["chroma"]), np.array(b["chroma"])
-    d_chroma = min(float(np.linalg.norm(ca - cb)) / np.sqrt(2.0), 1.0)
+    best = min(float(np.linalg.norm(np.roll(ca, shift) - cb)) for shift in range(12))
+    d_chroma = min(best / np.sqrt(2.0), 1.0)
 
     return (
         WEIGHTS["duration"] * d_dur

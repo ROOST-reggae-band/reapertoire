@@ -140,13 +140,14 @@ count-in or someone still settling.
 
 ### The three features
 
-**Duration** — weight 0.15. Free, straight from the manifest, and the weakest
-signal: a run-through gets cut short or extended. Differences are capped at
-60 seconds, since two songs a minute apart in length are simply different and
-ninety seconds apart is not *more* different.
+**Duration** — weight 0. Measured against a real library it separates nothing:
+same-song takes differ in length *more* than different-song ones do, because a
+run-through gets cut short or extended far more than two different songs differ.
+It is computed and stored, but weighted at zero.
 
-**Tempo** — weight 0.40, the heaviest, because a band's arrangements are fixed
-and tempo is unusually discriminative as a result.
+**Tempo** — weight 0.10. A genuinely independent signal, but a weaker one than
+it first appeared, partly because the estimator octave-flips between takes of
+the same song.
 
 Computed from *spectral flux*: how much energy appeared since the previous FFT
 frame. Rises are onsets; falls are decay and are discarded. Autocorrelating that
@@ -159,14 +160,19 @@ Comparison tries half and double time as well as the reported value. A tracker
 reporting 172 where the band feels 86 is a routine octave error, not a different
 song.
 
-**Chroma histogram** — weight 0.45. The harmonic identity of the take.
+**Chroma histogram** — weight 0.90, the heaviest. The harmonic identity of the
+take, and the feature that actually separates songs.
 
 Every FFT bin between 55 Hz and 4 kHz is converted to a MIDI note number, folded
 to one of twelve pitch classes, and its energy accumulated. Below 55 Hz is mostly
 rumble; above 4 kHz is mostly cymbals and air. The result is normalised to sum
-to one, then **rotated so the strongest pitch class sits first**, which makes it
-key-independent: a capo, a detuned guitar, or the band dropping a tune a
-semitone should not change its identity.
+to one.
+
+Key-independence is achieved at comparison time, by taking the best of all
+twelve rotations, rather than by rotating each histogram to its own strongest
+pitch class. Rotating by the strongest class is discontinuous: two takes of one
+song whose tonic and dominant swap rank -- often a percent or two apart --
+would produce completely different vectors.
 
 ### Scoring
 
@@ -178,7 +184,7 @@ so higher is better, and the top three are offered.
 ### Confidence is a margin, not a threshold
 
 A guess is pre-selected only when it beats the runner-up by `minMargin`
-(default 0.08). It is deliberately not an absolute score floor.
+(default 0.02). It is deliberately not an absolute score floor.
 
 Measured by leave-one-out over a real library, every score landed between 0.74
 and 0.99, so any absolute floor pre-selects wrong answers as readily as right
@@ -191,28 +197,36 @@ than a plausible wrong answer somebody has to notice and undo.
 
 ### How well it works
 
-On a library of sixteen takes across eleven songs, leave-one-out over the nine
-takes whose song had another reference to match against:
+On a library of twenty-seven takes across eleven songs, leave-one-out over the
+twenty-three takes whose song had another reference to match against:
 
 | | |
 |---|---|
-| top-1 correct | 6/9 |
-| top-3 correct | 9/9 |
-| pre-selected under a 0.08 margin | 4, all correct |
+| top-1 correct | 14/23 (61%) |
+| top-3 correct | 23/23 (100%) |
+| pre-selected under a 0.02 margin | 3, all correct |
+
+Top-3 is the number that matters for the workflow: the panel offers a short
+list, not a verdict.
 
 Feature separation over the same library, which is what the weights are
-calibrated against rather than fitted to:
+calibrated against:
 
 | feature | same-song gap | different-song gap | separation |
 |---|---|---|---|
-| tempo | 0.97 BPM | 11.99 BPM | 1.39 |
-| chroma | 0.06 | 0.07 | 0.60 |
-| duration | 65.5 s | 66.5 s | 0.02 |
+| chroma | 0.05 | 0.08 | 0.97 |
+| tempo | 4.03 BPM | 10.29 BPM | 0.82 |
+| duration | 126.6 s | 100.2 s | **-0.37** |
 
-Two takes of one song land within about a beat per minute of each other, which
-is why tempo carries the most weight. Duration separates nothing at all and is
-kept only as a faint tiebreak. `tools/recognise/evaluate.py` reruns all of this
-as the library grows.
+**These numbers reversed the first calibration.** On an early library of four
+takes, tempo looked dominant (1.39 against chroma's 0.60) and the weights were
+set accordingly. On twenty-seven takes it is the other way round, and duration
+is actively harmful -- same-song takes differ in length more than different
+songs do. The first measurement was small-sample noise, and re-running the
+measurement is the point of keeping it scripted.
+
+`tools/recognise/evaluate.py` reruns all of this as the library grows. Expect
+the weights to move again.
 
 Top-3 is the number that matters for the workflow, since the panel offers a
 short list rather than a verdict. This is a small sample and the weights have
