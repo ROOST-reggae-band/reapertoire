@@ -1,0 +1,158 @@
+local h = require("test.helpers")
+local naming = require("lib.naming")
+
+local T = {}
+
+local SONGS = {
+  { title = "Dub Corner" }, { title = "Skank" },
+  { title = "Přítel" }, { title = "Take It Easy" },
+  { title = "Stop - Start" },
+}
+
+function T.parses_the_form_it_writes()
+  local song, label = naming.parse("Dub Corner - take 3", SONGS)
+  h.assert_eq(song, "Dub Corner")
+  h.assert_eq(label, "take 3")
+  h.assert_eq(naming.take_number(label), 3)
+end
+
+function T.a_note_round_trips_as_the_label()
+  local name = naming.format("Dub Corner", "slow version")
+  h.assert_eq(name, "Dub Corner - slow version")
+  local song, label = naming.parse(name, SONGS)
+  h.assert_eq(song, "Dub Corner")
+  h.assert_eq(label, "slow version")
+  h.assert_eq(naming.take_number(label), nil, "a note is not a take number")
+end
+
+function T.take_number_accepts_the_forms_the_contract_normalises()
+  h.assert_eq(naming.take_number("take 3"), 3)
+  h.assert_eq(naming.take_number("Take 12"), 12)
+  h.assert_eq(naming.take_number("(take 3)"), 3)
+  h.assert_eq(naming.take_number("[take 12]"), 12)
+  h.assert_eq(naming.take_number("takeaway"), nil)
+end
+
+function T.diacritics_survive_the_round_trip()
+  local name = naming.format("Přítel", "take 4")
+  local song, label = naming.parse(name, SONGS)
+  h.assert_eq(song, "Přítel")
+  h.assert_eq(label, "take 4")
+end
+
+function T.a_song_whose_title_contains_the_separator_still_parses()
+  -- Splitting on the last separator would yield "Stop" here; matching against
+  -- the known titles is what keeps it whole.
+  local song, label = naming.parse("Stop - Start - take 2", SONGS)
+  h.assert_eq(song, "Stop - Start")
+  h.assert_eq(label, "take 2")
+end
+
+function T.a_song_whose_title_contains_take_still_parses()
+  local song, label = naming.parse("Take It Easy - take 2", SONGS)
+  h.assert_eq(song, "Take It Easy")
+  h.assert_eq(label, "take 2")
+end
+
+function T.a_bare_song_title_parses_with_no_label()
+  local song, label = naming.parse("Dub Corner", SONGS)
+  h.assert_eq(song, "Dub Corner")
+  h.assert_eq(label, nil)
+end
+
+function T.parsing_falls_back_to_the_last_separator_without_a_song_list()
+  local song, label = naming.parse("Some Unknown Tune - take 1")
+  h.assert_eq(song, "Some Unknown Tune")
+  h.assert_eq(label, "take 1")
+end
+
+function T.an_unnamed_region_does_not_parse()
+  h.assert_eq(naming.parse("Take 1", SONGS), nil)
+  h.assert_eq(naming.parse("Intro", SONGS), nil)
+  h.assert_eq(naming.parse("", SONGS), nil)
+  h.assert_eq(naming.parse(nil, SONGS), nil)
+end
+
+function T.numbers_takes_per_song_in_chronological_order()
+  local rows = {
+    { start = 10, song = "Dub Corner" },
+    { start = 20, song = "Skank" },
+    { start = 30, song = "Dub Corner" },
+  }
+  naming.renumber(rows)
+  h.assert_eq(rows[1].label, "take 1")
+  h.assert_eq(rows[2].label, "take 1")
+  h.assert_eq(rows[3].label, "take 2")
+end
+
+function T.numbering_follows_time_not_list_order()
+  local rows = {
+    { start = 90, song = "Dub Corner" },
+    { start = 10, song = "Dub Corner" },
+  }
+  naming.renumber(rows)
+  h.assert_eq(rows[1].take_no, 2)
+  h.assert_eq(rows[2].take_no, 1)
+end
+
+function T.renumbering_is_recomputed_not_incremented()
+  local rows = {
+    { start = 10, song = "Dub Corner" },
+    { start = 20, song = "Dub Corner" },
+    { start = 30, song = "Dub Corner" },
+  }
+  naming.renumber(rows)
+  h.assert_eq(rows[2].take_no, 2)
+
+  rows[2].song = "Skank"
+  naming.renumber(rows)
+  h.assert_eq(rows[1].take_no, 1)
+  h.assert_eq(rows[2].take_no, 1, "Skank starts its own count")
+  h.assert_eq(rows[3].take_no, 2, "the third row becomes Dub Corner take 2")
+end
+
+function T.a_note_replaces_the_label_but_still_consumes_a_take_number()
+  -- Otherwise the take after a noted one would reuse its number.
+  local rows = {
+    { start = 10, song = "Dub Corner" },
+    { start = 20, song = "Dub Corner", note = "slow version" },
+    { start = 30, song = "Dub Corner" },
+  }
+  naming.renumber(rows)
+  h.assert_eq(rows[1].label, "take 1")
+  h.assert_eq(rows[2].label, "slow version")
+  h.assert_eq(rows[2].take_no, 2, "still counted")
+  h.assert_eq(rows[3].label, "take 3")
+end
+
+function T.unnamed_rows_get_no_label_and_do_not_consume_a_number()
+  local rows = {
+    { start = 10, song = "Dub Corner" },
+    { start = 20, song = nil },
+    { start = 30, song = "Dub Corner" },
+  }
+  naming.renumber(rows)
+  h.assert_eq(rows[2].label, nil)
+  h.assert_eq(rows[3].take_no, 2)
+end
+
+function T.songs_differing_only_by_diacritics_share_a_count()
+  local rows = {
+    { start = 10, song = "Přítel" },
+    { start = 20, song = "Pritel" },
+  }
+  naming.renumber(rows)
+  h.assert_eq(rows[2].take_no, 2)
+end
+
+function T.region_name_composes_song_and_label()
+  local rows = { { start = 10, song = "Dub Corner" } }
+  naming.renumber(rows)
+  h.assert_eq(naming.region_name(rows[1]), "Dub Corner - take 1")
+end
+
+function T.an_unnamed_row_has_no_region_name()
+  h.assert_eq(naming.region_name({ start = 10 }), nil)
+end
+
+return T

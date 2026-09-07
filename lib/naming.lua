@@ -1,0 +1,122 @@
+-- lib/naming.lua
+-- Region names: composing them, parsing them back, and numbering takes.
+--
+-- A region name is the only thing a person sees in REAPER's region manager, so
+-- it is written for them: "Dub Corner - take 3". It is also the only place the
+-- naming survives closing the project, so it has to parse back reliably --
+-- otherwise reopening the panel means naming everything again.
+--
+-- The part after the song is a free label. It defaults to the take number but
+-- can be replaced with a note: "Dub Corner - slow version". Downstream this is
+-- one field either way, so a note costs nothing structurally.
+
+local text = require("lib.util.text")
+
+local M = {}
+
+local SEPARATOR = " - "
+
+-- Splits a name into song and label. When `songs` is given, the longest known
+-- title that the name starts with wins -- that is what lets a song whose own
+-- title contains " - " survive the round trip. Without the list, the last
+-- separator is the boundary.
+function M.parse(name, songs)
+  if not name or name == "" then return nil end
+
+  if songs then
+    local best
+    for _, song in ipairs(songs) do
+      local title = song.title or song
+      local folded_title, folded_name = text.fold(title), text.fold(name)
+      if folded_name == folded_title then
+        return title, nil
+      end
+      if folded_name:sub(1, #folded_title + #SEPARATOR)
+         == folded_title .. SEPARATOR then
+        if not best or #title > #best then best = title end
+      end
+    end
+    if best then
+      return best, name:sub(#best + #SEPARATOR + 1)
+    end
+  end
+
+  local last = nil
+  local from = 1
+  while true do
+    local i = name:find(SEPARATOR, from, true)
+    if not i then break end
+    last = i
+    from = i + 1
+  end
+  if not last then return nil end
+
+  local song = name:sub(1, last - 1)
+  local label = name:sub(last + #SEPARATOR)
+  if song == "" or label == "" then return nil end
+  return song, label
+end
+
+-- The take number a label carries, or nil when it is a note rather than a
+-- number. "take 3", "Take 3" and the bracketed forms the downstream contract
+-- normalises all count.
+function M.take_number(label)
+  if not label then return nil end
+  local lowered = label:lower()
+  local n = lowered:match("^take%s+(%d+)$")
+    or lowered:match("^%(take%s+(%d+)%)$")
+    or lowered:match("^%[take%s+(%d+)%]$")
+  return n and tonumber(n) or nil
+end
+
+function M.default_label(take_no)
+  return string.format("take %d", take_no)
+end
+
+function M.format(song, label)
+  if not label or label == "" then return song end
+  return song .. SEPARATOR .. label
+end
+
+-- Assigns take numbers per song in chronological order, and derives each row's
+-- label.
+--
+-- Recomputed from scratch every time, never incremented: renaming one row
+-- changes the numbering of two songs at once, and a counter that only goes up
+-- gets it wrong the first time a name is corrected.
+--
+-- A row with its own `note` keeps it as the label but still consumes a take
+-- number, so "slow version" does not make the next plain take number wrong.
+function M.renumber(rows)
+  local ordered = {}
+  for i, row in ipairs(rows) do ordered[i] = { index = i, row = row } end
+  table.sort(ordered, function(a, b)
+    if a.row.start == b.row.start then return a.index < b.index end
+    return a.row.start < b.row.start
+  end)
+
+  local counts = {}
+  for _, entry in ipairs(ordered) do
+    local row = entry.row
+    if row.song and row.song ~= "" then
+      local key = text.fold(row.song)
+      counts[key] = (counts[key] or 0) + 1
+      row.take_no = counts[key]
+      row.label = (row.note and row.note ~= "") and row.note
+        or M.default_label(row.take_no)
+    else
+      row.take_no = nil
+      row.label = nil
+    end
+  end
+
+  return rows
+end
+
+-- The name a row should carry in the project.
+function M.region_name(row)
+  if not row.song or row.song == "" then return nil end
+  return M.format(row.song, row.label)
+end
+
+return M
