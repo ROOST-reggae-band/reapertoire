@@ -13,8 +13,10 @@ reaper.ClearConsole()
 
 local settings = reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false)
 log("RENDER_SETTINGS   = %d", settings)
-log("  bit 1  (&1)     = %s", (settings & 1) ~= 0 and "set" or "clear")
-log("  bit 2  (&2)     = %s", (settings & 2) ~= 0 and "set" or "clear")
+log("  mode bits (&3)  = %d  -> %s", settings & 3,
+  (settings & 3) == 3 and "selected tracks (stems)"
+  or (settings & 3) == 0 and "master mix"
+  or "mixed/unknown")
 log("  bit 8  (&8)     = %s  (use render matrix)",
   (settings & 8) ~= 0 and "SET" or "clear")
 log("  bit 32 (&32)    = %s  (selected media items)",

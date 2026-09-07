@@ -15,6 +15,20 @@ local M = {}
 -- File: Render project, using the most recent render settings (no dialog).
 local RENDER_ACTION = 41824
 
+-- Observed rather than documented: the reference says "&2=stems only", but a
+-- project set to master mix reads 16 and one set to selected-tracks-stems reads
+-- 19, i.e. bits 1 and 2 together. Setting 2 alone renders the master mix.
+local MODE_BITS = 3
+local MODE_MASTER = 0
+local MODE_STEMS = 3
+
+-- The rest of the mask is the operator's (bit 16 = mono media to mono files,
+-- and so on), so only the mode bits are ever changed.
+local function with_mode(mode)
+  local current = reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false)
+  return (math.floor(current) & ~MODE_BITS) | mode
+end
+
 local NUMERIC_KEYS = {
   "RENDER_BOUNDSFLAG", "RENDER_STARTPOS", "RENDER_ENDPOS",
   "RENDER_SETTINGS", "RENDER_CHANNELS", "RENDER_SRATE",
@@ -140,12 +154,12 @@ function M.stems(dir, tracks, start_time, stop_time, log)
   reaper.GetSetProjectInfo(0, "RENDER_ENDPOS", stop_time, true)
   reaper.GetSetProjectInfo(0, "RENDER_TAILFLAG", 0, true)
   reaper.GetSetProjectInfo(0, "RENDER_ADDTOPROJ", 0, true)
-  reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 2, true) -- stems only
+  reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", with_mode(MODE_STEMS), true)
   reaper.GetSetProjectInfo_String(0, "RENDER_FILE", dir, true)
   reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", "$track", true)
 
   local applied = reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false)
-  log("      RENDER_SETTINGS=%d (2 = stems only)", applied)
+  log("      RENDER_SETTINGS=%d (mode bits %d = stems)", applied, applied & MODE_BITS)
 
   reaper.Main_OnCommand(RENDER_ACTION, 0)
 
@@ -220,9 +234,10 @@ function M.take(dir, filename, start_time, stop_time, settings_mask)
   reaper.GetSetProjectInfo(0, "RENDER_ENDPOS", stop_time, true)
   reaper.GetSetProjectInfo(0, "RENDER_TAILFLAG", 0, true)   -- no tail past the take
   reaper.GetSetProjectInfo(0, "RENDER_ADDTOPROJ", 0, true)  -- do not import the result
-  if settings_mask then
-    reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", settings_mask, true)
-  end
+  -- Explicit: the project may be left in stems mode from a previous pass, and
+  -- this one must produce the master mix.
+  reaper.GetSetProjectInfo(0, "RENDER_SETTINGS",
+    settings_mask or with_mode(MODE_MASTER), true)
   reaper.GetSetProjectInfo_String(0, "RENDER_FILE", dir, true)
   reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", filename, true)
 
