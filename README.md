@@ -57,6 +57,8 @@ Song recognition needs its own environment:
    unnamed one.
 3. **Render named takes.** Produces a master, waveform peaks and per-instrument
    stems for each take, plus a manifest.
+4. **Rebuild recognition references.** Feeds the takes you just named back in,
+   so the next session arrives with suggestions. See below.
 
 `Analyse (dry run)` reports what detection found without writing anything, and
 `Capture tuning fixture` saves a session's level data so thresholds can be tuned
@@ -119,6 +121,35 @@ secondary references for songs never yet labelled.
 References are stored as extracted features, never audio: a few dozen numbers
 per take, so the library stays tiny and survives the source recordings being
 deleted.
+
+### Rebuilding the reference library
+
+**Run this after every render.** Recognition can only suggest songs it holds
+references for, so the takes you just named do nothing until they are indexed.
+
+From the launcher menu, choose **Rebuild recognition references**. It reports
+what it found:
+
+```
+Indexed 27 takes across 11 songs:
+  A Song (3)
+  Another (2)
+  ...
+```
+
+Or from a terminal:
+
+```sh
+.venv/bin/python tools/recognise/recognise.py index \
+  --sessions-root ~/Music/RehearsalSessions \
+  --out ~/Music/RehearsalSessions/.reapertoire-references.json
+```
+
+The library is **derived data**: it is rebuilt from scratch by walking every
+`manifest.json` under the sessions root. Deleting it loses nothing, and there
+is never a reason not to rebuild it. Doing so is also how the weights get
+re-measured -- run `tools/recognise/evaluate.py` afterwards and see whether the
+numbers above still hold.
 
 ### The pipeline
 

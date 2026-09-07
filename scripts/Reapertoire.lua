@@ -15,6 +15,7 @@ local ITEMS = {
   { label = "Name takes",                        file = "scripts/Reapertoire_Name_takes.lua" },
   { label = "Render named takes",                file = "scripts/Reapertoire_Render.lua" },
   { label = "Upload session to the library",     file = "tools/upload_session.lua" },
+  { label = "Rebuild recognition references",    file = "tools/reindex_references.lua" },
   { label = "Analyse (dry run, writes nothing)", file = "scripts/Reapertoire_Analyze_dryrun.lua" },
   { label = "Capture tuning fixture",            file = "tools/capture_fixture.lua" },
   { label = "Show render settings",              file = "tools/probe_render.lua" },
