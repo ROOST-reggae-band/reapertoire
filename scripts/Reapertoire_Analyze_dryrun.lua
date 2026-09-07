@@ -3,7 +3,9 @@
 -- project: no regions, no markers, no sidecar.
 
 local script_path = ({ reaper.get_action_context() })[2]
-local repo_dir = script_path:match("^(.*)[/\\]scripts[/\\][^/\\]*$")
+-- REAPERTOIRE_DIR is set when this runs via the launcher, which dofiles
+-- us and would otherwise have us derive the path from ITS location.
+local repo_dir = REAPERTOIRE_DIR or script_path:match("^(.*)[/\\]scripts[/\\][^/\\]*$")
 package.path = repo_dir .. "/?.lua;" .. repo_dir .. "/?/init.lua;" .. package.path
 
 local adapter = require("adapters.reaper_api")
