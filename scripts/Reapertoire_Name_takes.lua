@@ -192,7 +192,7 @@ local function run_recognition()
 
   -- 25 s is plenty for a chord distribution and a tempo, and the probe render
   -- runs the whole FX chain, so every second counts.
-  local dir, paths, failures, meta = recognise.render_probes(render, pending, 25)
+  local dir, paths, failures, meta, elapsed = recognise.render_probes(render, pending, 25)
 
   local rendered = 0
   for _ in pairs(paths) do rendered = rendered + 1 end
@@ -217,8 +217,9 @@ local function run_recognition()
       "Rendered %d probes, no match: %s", rendered,
       match_error or "the library returned no candidates")
   else
-    recognise_note = string.format("Suggested songs for %d of %d unnamed takes",
-      guessed, #pending)
+    recognise_note = string.format(
+      "Suggested songs for %d of %d unnamed takes (%.1fs to render probes)",
+      guessed, #pending, elapsed or 0)
   end
 end
 

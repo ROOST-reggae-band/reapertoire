@@ -243,6 +243,36 @@ function M.stems(dir, tracks, start_time, stop_time, log)
   return written, missing
 end
 
+-- Bypasses every track's FX, returning what to pass back to restore them.
+--
+-- Analysis wants the performance, not the mix: EQ, compression, reverb and
+-- stereo imaging cost render time and, if anything, blur the chroma and onsets
+-- being measured. On a session with dozens of processed tracks this is the
+-- difference between a probe pass being usable and not.
+local function bypass_fx()
+  local saved = {}
+  for i = 0, reaper.CountTracks(0) - 1 do
+    local track = reaper.GetTrack(0, i)
+    saved[i] = reaper.GetMediaTrackInfo_Value(track, "I_FXEN")
+    reaper.SetMediaTrackInfo_Value(track, "I_FXEN", 0)
+  end
+  local master = reaper.GetMasterTrack(0)
+  saved.master = reaper.GetMediaTrackInfo_Value(master, "I_FXEN")
+  reaper.SetMediaTrackInfo_Value(master, "I_FXEN", 0)
+  return saved
+end
+
+local function restore_fx(saved)
+  for i = 0, reaper.CountTracks(0) - 1 do
+    if saved[i] ~= nil then
+      reaper.SetMediaTrackInfo_Value(reaper.GetTrack(0, i), "I_FXEN", saved[i])
+    end
+  end
+  if saved.master ~= nil then
+    reaper.SetMediaTrackInfo_Value(reaper.GetMasterTrack(0), "I_FXEN", saved.master)
+  end
+end
+
 -- Renders a short, deliberately poor-quality excerpt for analysis.
 --
 -- Mono at 11 kHz, which is what the recogniser downsamples to anyway: chroma
@@ -262,6 +292,30 @@ function M.probe(dir, filename, start_time, stop_time)
   reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", saved_channels, true)
 
   return path, err
+end
+
+-- Renders several probes with FX bypassed for the whole run, so the chain is
+-- toggled once rather than once per take.
+--
+-- `jobs` are { key, dir, name, start, stop }. Returns { key = path } and a list
+-- of failures.
+function M.probe_batch(jobs)
+  local fx = bypass_fx()
+  reaper.PreventUIRefresh(1)
+
+  local paths, failures = {}, {}
+  for _, job in ipairs(jobs) do
+    local path, err = M.probe(job.dir, job.name, job.start, job.stop)
+    if path then
+      paths[job.key] = path
+    else
+      failures[#failures + 1] = string.format("take %s: %s", tostring(job.key), tostring(err))
+    end
+  end
+
+  reaper.PreventUIRefresh(-1)
+  restore_fx(fx)
+  return paths, failures
 end
 
 -- Renders [start, stop) to `dir/filename`. `filename` carries no extension --
