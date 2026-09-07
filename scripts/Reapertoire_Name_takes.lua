@@ -192,7 +192,7 @@ local function run_recognition()
 
   -- 25 s is plenty for a chord distribution and a tempo, and the probe render
   -- runs the whole FX chain, so every second counts.
-  local dir, paths, failures, meta, elapsed = recognise.render_probes(render, pending, 25,
+  local dir, paths, failures, meta, elapsed = recognise.render_probes(render, pending, 600,
     cfg.recognition and cfg.recognition.probeFormat)
 
   local rendered = 0
@@ -389,29 +389,31 @@ local function frame()
         if query == "" and row.guesses and #row.guesses > 0 then
           local ranked = {}
           for _, guess in ipairs(row.guesses) do
-            ranked[#ranked + 1] = { title = guess.song, score = guess.score }
+            ranked[#ranked + 1] =
+              { title = guess.song, score = guess.score, margin = guess.margin }
           end
           hits, from_guess = ranked, true
         end
 
-        -- Confidence is the MARGIN over the runner-up, not the absolute score.
-        -- Measured over held-out takes, every score landed between 0.74 and
-        -- 0.99, so any absolute floor pre-selects the wrong answers as readily
-        -- as the right ones -- while the wrong ones were the ones sitting
-        -- level with their runner-up.
+        -- Confidence is how far the winner is clear of the runner-up, as a
+        -- FRACTION of the runner-up rather than an absolute gap. Scores all sit
+        -- high and close together -- 0.96 against 0.94 is a rout, 0.99 against
+        -- 0.99 a coin toss -- so an absolute floor pre-selects wrong answers as
+        -- readily as right ones. The recogniser computes the ratio and sends it
+        -- as `margin`; over held-out takes every correct call led by at least
+        -- 11%, and the default sits just under that.
         --
-        -- Below the margin there is no pre-selection at all: a blank field is
+        -- Below the margin nothing is pre-selected at all: a blank field is
         -- quicker to deal with than a plausible wrong answer somebody has to
         -- notice and undo.
         -- `or` cannot express a configured zero, so the absence is tested.
-        local margin = 0.01
+        local margin = 0.10
         if cfg.recognition and cfg.recognition.minMargin ~= nil then
           margin = cfg.recognition.minMargin
         end
         local confident = false
-        if from_guess and hits[1] then
-          local second = hits[2] and hits[2].score or 0
-          confident = ((hits[1].score or 0) - second) >= margin
+        if from_guess and hits[1] and hits[1].margin then
+          confident = hits[1].margin >= margin
         end
 
         -- Enter accepts the top match and jumps to the next unnamed take: type
@@ -442,15 +444,15 @@ local function frame()
 
         for i, song in ipairs(hits) do
           local marker = (i == 1 and (not from_guess or confident)) and "> " or "  "
-          -- The scores cluster near the top of the range; the GAP to the
-          -- runner-up is what actually says whether a guess can be trusted, so
-          -- it is shown rather than left for the reader to subtract.
+          -- Scores cluster near the top of their range and say little on their
+          -- own, so the lead over the runner-up is shown instead of leaving the
+          -- reader to subtract two numbers that differ in the third decimal.
           local shown
-          if song.score and i == 1 and hits[2] and hits[2].score then
-            shown = string.format("%s%s  %.3f  (+%.3f ahead)",
-              marker, song.title, song.score, song.score - hits[2].score)
+          if song.margin then
+            shown = string.format("%s%s  %d%% clear", marker, song.title,
+              math.floor(song.margin * 100 + 0.5))
           elseif song.score then
-            shown = string.format("%s%s  %.3f", marker, song.title, song.score)
+            shown = string.format("%s%s  %.2f", marker, song.title, song.score)
           else
             shown = marker .. song.title
           end

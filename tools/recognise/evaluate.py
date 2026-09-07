@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Leave-one-out evaluation of the recogniser against a real library.
 
-Run this as the library grows. The weights in recognise.py are prior judgement
-calibrated against measured feature separation, not fitted to any sample -- and
-a sample of nine cannot distinguish one weighting from another, so fitting to it
-would be modelling noise.
+Run this as the library grows. Every parameter in recognise.py that could have
+been guessed at was instead settled here, and two of them reversed themselves
+when the library got bigger -- so re-running this is the method rather than a
+formality.
+
+Scoring must mirror cmd_match exactly. An evaluator that measures something the
+tool does not do reports a number nobody will ever see.
 
     .venv/bin/python tools/recognise/evaluate.py --refs .../.reapertoire-references.json
 """
@@ -24,8 +27,11 @@ import recognise as R
 def rank(probe, songs):
     out = []
     for song, refs in songs.items():
-        best = min(R.distance(probe, r) for r in refs)
-        out.append((song, 1.0 - best))
+        if not refs:
+            continue
+        # The mean of the two closest takes, exactly as cmd_match scores.
+        closest = sorted(R.distance(probe, r) for r in refs)
+        out.append((song, 1.0 - float(np.mean(closest[:2]))))
     out.sort(key=lambda x: -x[1])
     return out
 
@@ -33,17 +39,19 @@ def rank(probe, songs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--refs", required=True)
-    parser.add_argument("--margin", type=float, default=0.05)
+    parser.add_argument("--margin", type=float, default=0.10)
     args = parser.parse_args()
 
     library = json.loads(Path(args.refs).expanduser().read_text())["songs"]
 
     print("Feature separation -- a feature is useful when same-song gaps are")
     print("smaller than different-song gaps.\n")
-    same, diff = {"tempo": [], "chroma": [], "duration": []}, {"tempo": [], "chroma": [], "duration": []}
+    # Duration is not scored, but it is measured here anyway: seeing its
+    # separation go negative is what settled the argument for removing it, and
+    # a future library might not behave the same way.
+    KEYS = ("chroma", "duration")
+    same, diff = {k: [] for k in KEYS}, {k: [] for k in KEYS}
     def gaps(a, b, into):
-        ta, tb = a["tempo"], b["tempo"]
-        into["tempo"].append(min(abs(ta - tb), abs(ta - tb * 2), abs(ta - tb / 2)))
         into["chroma"].append(float(np.linalg.norm(np.array(a["chroma"]) - np.array(b["chroma"]))))
         into["duration"].append(abs(a["duration"] - b["duration"]))
     for refs in library.values():
@@ -55,7 +63,7 @@ def main():
                 gaps(a, b, diff)
 
     print("  feature    same-song   different-song   separation")
-    for key in ("tempo", "chroma", "duration"):
+    for key in KEYS:
         s, d = np.array(same[key]), np.array(diff[key])
         if not len(s) or not len(d):
             continue
@@ -79,7 +87,12 @@ def main():
             hit = names[0] == song
             t1 += hit
             t3 += song in names[:3]
-            confident = len(ranked) > 1 and (ranked[0][1] - ranked[1][1]) >= args.margin
+            # The same relative margin the panel uses: the lead over the
+            # runner-up as a fraction of it, not an absolute gap.
+            confident = False
+            if len(ranked) > 1:
+                first, second = 1.0 - ranked[0][1], 1.0 - ranked[1][1]
+                confident = second > 0 and (second - first) / second >= args.margin
             if confident:
                 shown += 1
                 shown_right += hit
@@ -89,7 +102,8 @@ def main():
 
     if n:
         print(f"\n  top-1 {t1}/{n} ({100*t1/n:.0f}%)   top-3 {t3}/{n} ({100*t3/n:.0f}%)")
-        print(f"  pre-selected (margin >= {args.margin}): {shown}, of which correct {shown_right}")
+        print(f"  pre-selected (relative margin >= {args.margin}): {shown}, "
+              f"of which correct {shown_right}")
         print("\n  A small sample: differences of one or two here are noise.")
 
 

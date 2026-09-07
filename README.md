@@ -147,29 +147,32 @@ Or from a terminal:
 
 The library is **derived data**: it is rebuilt from scratch by walking every
 `manifest.json` under the sessions root. Deleting it loses nothing, and there
-is never a reason not to rebuild it. Doing so is also how the weights get
-re-measured -- run `tools/recognise/evaluate.py` afterwards and see whether the
-numbers above still hold.
+is never a reason not to rebuild it. Doing so is also how the accuracy figures
+get re-measured -- run `tools/recognise/evaluate.py` afterwards and see whether
+the numbers above still hold.
 
 ### The pipeline
 
 ```
-master.mp3 ──ffmpeg──▶ 30 s mono @ 11 kHz ──FFT──▶ spectrogram
-   │                   (from the middle)              │
-   │                                    ┌─────────────┴─────────────┐
-   └──▶ duration                   chroma histogram         spectral flux
-                                    (12 pitch classes)      → autocorrelation
-                                          │                      → tempo
-                                          ▼
-                       weighted distance against every reference take
+master.mp3 ──ffmpeg──▶ whole take, mono @ 2756 Hz ──FFT──▶ spectrogram
+   │                                                          │
+   │                                                   log compression
+   │                                                          │
+   └──▶ duration (stored, not scored)          82 Hz – 1 kHz folded to
+                                                  12 pitch classes
+                                                          │
+                                                per-frame normalise, average
+                                                          │
+                                                          ▼
+                                    distance to the two closest takes
+                                        of every song in the library
 ```
 
-Thirty seconds from the **middle** of the take, mono at 11 kHz. Chroma tops out
-around 5 kHz and tempo needs less still, so a higher rate buys nothing and costs
-decode time. The middle rather than the start because openings are often a
-count-in or someone still settling.
+The **whole take**, mono at 2756 Hz. Nothing above 1 kHz is read, so that rate
+is Nyquist for the band of interest plus resampler headroom — decoding at 11 kHz
+would spend four times the time and memory on content the feature discards.
 
-### The three features
+### The features
 
 **Duration** — not scored at all.
 
@@ -177,127 +180,135 @@ Not because it measures poorly, though it does, but because it cannot measure
 anything. A take is very often a fragment: one section being worked on, a false
 start, the second half after a breakdown. Two takes of the same song routinely
 differ by minutes, while two different songs played in full are much the same
-length. It is computed and stored for context and left out of the distance.
+length. It is stored for context and left out of the distance.
 
-**Tempo** — weight 0.10. A genuinely independent signal, but a weaker one than
-it first appeared, partly because the estimator octave-flips between takes of
-the same song.
+**Tempo** — computed historically, no longer used at all. It looked like a
+genuinely independent signal and measured as one on a small library, but once
+the chroma feature was fixed (below) tempo only made things worse: at weight
+0.05 it cost two takes out of twenty-seven, at 0.20 it cost nine. The estimator
+octave-flips between takes of the same song — 140 BPM and 70 BPM for the same
+tune, in this library — so most of what it contributed was noise. It was removed
+rather than down-weighted, which also let the sample rate drop to what chroma
+alone needs and is most of why an index now takes seconds.
 
-Computed from *spectral flux*: how much energy appeared since the previous FFT
-frame. Rises are onsets; falls are decay and are discarded. Autocorrelating that
-envelope finds the period that repeats most strongly, and the peak is
-parabolically interpolated — autocorrelation lags are integers, and near 140 BPM
-the neighbouring lags are fourteen BPM apart, which is uselessly coarse for a
-feature carrying this much weight.
+**Chroma** — the only scored feature, and the one that does all the work. Three
+details matter, each of them measured rather than assumed.
 
-Comparison tries half and double time as well as the reported value. A tracker
-reporting 172 where the band feels 86 is a routine octave error, not a different
-song.
+*The whole take is analysed, not an excerpt.* This is the single largest factor
+in the whole system. On identical data with an identical feature, a 30-second
+window from the middle ranks the right song first 74% of the time; the whole
+take ranks it first 98%. A rehearsal take is not homogeneous — a short window
+can land entirely inside one vamp, and every song has a bar of A minor
+somewhere. Analysing eight times as much audio recovers more accuracy than any
+amount of cleverness applied to a slice of it.
 
-**Chroma** — the harmonic identity of the take, and the feature that actually
-separates songs. Measured two ways, blended 0.3 averaged to 0.7 sequenced.
+*Only 82 Hz to 1 kHz is read.* The upper bound is doing real work: above roughly
+a kilohertz there is little but upper harmonics, cymbals and air, none of which
+says which chord is being played. Dropping the 1–4 kHz band is worth eight
+points of top-1 accuracy on its own, and the useful range runs from about 850 Hz
+to 1 kHz rather than balancing on one value. The lower bound clears rumble and
+the kick fundamental.
 
-The *averaged* histogram is one twelve-element vector for the whole excerpt.
-Robust, but blunt: it throws away the order the chords arrive in, and two tunes
-by one band in the same key average to nearly the same thing.
+*Amplitude is log-compressed.* Without it a single loud snare contributes as
+much to the harmonic profile as a bar of sustained chord, and the profile ends
+up describing the drummer rather than the song. Compression is worth roughly
+fifteen points of top-1 on its own; whether it is `log` or `sqrt` barely
+matters, but its absence does.
 
-The *sequence* is the same histogram computed over twenty-four time segments,
-compared by dynamic time warping. DTW rather than a frame-by-frame comparison
-because two takes of a song rarely start at the same point in it -- one at the
-intro, another after a false start, a third at the second verse.
-
-They fail differently, which is why both are kept. Over a real library the
-average alone gives 70% top-1 and 100% top-3; the sequence alone 78% and 89%;
-the blend 74% and 96%. More importantly the blend is the only one whose
-*confidence* means anything -- see below.
-
-Every FFT bin between 55 Hz and 4 kHz is converted to a MIDI note number, folded
-to one of twelve pitch classes, and its energy accumulated. Below 55 Hz is mostly
-rumble; above 4 kHz is mostly cymbals and air. The result is normalised to sum
-to one.
+Each FFT bin in range is converted to a MIDI note number and its energy split
+between the two nearest pitch classes in proportion to how close it sits to
+each, rather than rounded into one of them — rounding makes the mapping jump
+discontinuously as a band tunes a fraction flat. Each frame is normalised before
+averaging, so a loud chorus and a quiet verse count equally toward what the song
+is.
 
 Key-independence is achieved at comparison time, by taking the best of all
 twelve rotations, rather than by rotating each histogram to its own strongest
 pitch class. Rotating by the strongest class is discontinuous: two takes of one
-song whose tonic and dominant swap rank -- often a percent or two apart --
-would produce completely different vectors.
+song whose tonic and dominant swap rank — often a percent or two apart — would
+produce completely different vectors.
+
+Because nothing above 1 kHz is ever read, audio is decoded at 2756 Hz rather
+than 11 kHz. That is Nyquist for the band of interest plus headroom for the
+resampler's filter, so it is a cheaper route to the same numbers rather than an
+approximation — and it makes the whole take affordable to analyse.
 
 ### Scoring
 
-Each feature contributes a distance in `0..1`, combined by weight. A song scores
-as its *closest* reference take — a band plays a tune differently on different
-nights, and one good match is evidence. Scores are reported as `1 - distance`,
-so higher is better, and the top three are offered.
+A song scores as the mean of its **two closest** reference takes, not its single
+closest. The single closest rewards a lucky match against one unrepresentative
+take — a false start, a fragment where the band never reached the chorus — and a
+song with many references gets more chances to produce one. Requiring two to
+agree costs nothing when the match is real: over forty-four held-out takes it
+gets 43 right against 42 for the single closest and 38 for the average of all,
+and it lifts the narrowest correct call from 2% clear of the runner-up to 11%.
 
-### Confidence is a margin, not a threshold
+Scores are reported as `1 - distance`, so higher is better, and the top three
+are offered.
+
+### Confidence is a relative margin
 
 A guess is pre-selected only when it beats the runner-up by `minMargin`
-(default 0.01). It is deliberately not an absolute score floor.
+(default 0.10), measured as a **fraction of the runner-up's distance** rather
+than as an absolute gap.
 
-Measured by leave-one-out over a real library, every score landed between 0.74
-and 0.99, so any absolute floor pre-selects wrong answers as readily as right
-ones. The wrong answers were characteristically the ones sitting level with
-their runner-up — two songs at 0.91 apiece — while correct ones tended to pull
-clear. The gap discriminates; the height does not.
+The distinction is not pedantry. Chroma distances are all small and all similar
+— scores land between 0.92 and 0.99 — so an absolute floor pre-selects wrong
+answers as readily as right ones, and even an absolute *gap* threshold sits in
+the third decimal place where it cannot separate anything. The ratio can: over
+held-out takes every correct call led its runner-up by at least 11%, with a
+median of 59%.
+
+The panel shows this directly, as `Čoudy  62% clear`, because the raw score
+carries almost no information and the lead carries nearly all of it.
 
 Below the margin nothing is pre-selected. A blank field is quicker to deal with
 than a plausible wrong answer somebody has to notice and undo.
 
 ### How well it works
 
-On a library of twenty-seven takes across eleven songs, leave-one-out over the
-twenty-three takes whose song had another reference to match against:
+Leave-one-out over a library of forty-four takes across eleven songs — every
+take scored against a library with itself removed:
 
 | | |
 |---|---|
-| top-1 correct | 20/27 (74%) |
-| top-3 correct | 26/27 (96%) |
-| pre-selected under a 0.01 margin | 13, all correct |
-
-The last row matters most. Raw scores cluster between 0.92 and 0.99, so their
-absolute value says almost nothing -- but the gap to the runner-up separates
-cleanly: when the top guess is right the median gap is 0.017, when it is wrong
-0.004, and the wrong ones never exceed 0.009. Half the takes now arrive with a
-pre-selected guess that has never been wrong on this library.
+| top-1 correct | 43/44 (98%) |
+| top-3 correct | 44/44 (100%) |
+| narrowest correct margin | 11% clear of the runner-up |
+| median correct margin | 59% clear |
 
 Top-3 is the number that matters for the workflow: the panel offers a short
-list, not a verdict.
+list, not a verdict, and on this library the right answer is always in it.
 
-Feature separation over the same library, which is what the weights are
-calibrated against:
+The single remaining error is a mutual confusion between two songs that share a
+key and a progression. It is *confidently* wrong — it leads its runner-up by
+more than the margin — so the threshold cannot catch it, and pre-selection is
+best understood as a convenience that is usually right rather than a verdict.
 
-| feature | same-song gap | different-song gap | separation |
-|---|---|---|---|
-| chroma | 0.05 | 0.08 | 0.97 |
-| tempo | 4.03 BPM | 10.29 BPM | 0.82 |
-| duration | 126.6 s | 100.2 s | **-0.37** (not scored) |
+**These numbers have reversed themselves twice, and that is the point of
+recording the method.** An early four-take library made tempo look dominant, and
+the weights were set accordingly; twenty-seven takes reversed it. A later
+version added sequence matching by dynamic time warping, which measured as an
+improvement over averaged chroma on a 30-second excerpt — and became worthless
+once the excerpt was replaced by the whole take, at which point the plain
+average beat it outright. Both were removed. Re-running the measurement as the
+library grows is the method, not a formality.
 
-**These numbers reversed the first calibration.** On an early library of four
-takes, tempo looked dominant (1.39 against chroma's 0.60) and the weights were
-set accordingly. On twenty-seven takes it is the other way round. The first
-measurement was small-sample noise, and re-running it is the point of keeping
-it scripted.
-
-Duration's negative separation is not noise but a property of the domain, which
-is why it is removed rather than down-weighted.
-
-`tools/recognise/evaluate.py` reruns all of this as the library grows. Expect
-the weights to move again.
-
-Top-3 is the number that matters for the workflow, since the panel offers a
-short list rather than a verdict. This is a small sample and the weights have
-not been fitted to it — they are prior judgement, and re-measuring as the
-library grows is the point of recording the method here.
+`tools/recognise/evaluate.py` reruns all of this. Expect it to move again.
 
 ### What it deliberately does not do
 
 No waveform peaks: the envelope says nothing about *which* song. No melody
 extraction. No beat-synchronous alignment.
 
-Beat-synchronous CQT chroma with subsequence DTW over all twelve rotations is
-the standard next step, and is **layer 2** — to be built only if layer 1's top-1
-accuracy disappoints against real labelled data. Reaching for it first would be
-optimising something not yet measured.
+Beat-synchronous CQT chroma and cross-recurrence matching (the Qmax family, the
+standard approach in the cover-song identification literature) are the obvious
+next step and remain unbuilt, deliberately. Subsequence DTW over chroma
+sequences *was* tried here and measured worse than the plain average once the
+whole take was analysed — 66% against 97%. The lesson generalises: the cheap
+structural fix (analyse everything, band-limit it, compress it) outperformed the
+sophisticated one, and there is no reason to reach for layer 2 while layer 1
+answers correctly forty-three times out of forty-four.
 
 ### Implementation
 
