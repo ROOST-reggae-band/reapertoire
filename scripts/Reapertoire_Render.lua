@@ -231,10 +231,12 @@ for i, row in ipairs(rows) do
         local t = track_for_slug[slug]
         if t then wanted[#wanted + 1] = { media_track = t.media_track, slug = slug, name = t.name } end
       end
+      log("      stems wanted: %d of %d instruments have a mapped live track",
+        #wanted, #(row.instruments or {}))
       if #wanted > 0 then
         local stem_dir = folder .. "/stems"
         reaper.RecursiveCreateDirectory(stem_dir, 0)
-        local written, missing = render.stems(stem_dir, wanted, row.start, row.stop)
+        local written, missing = render.stems(stem_dir, wanted, row.start, row.stop, log)
         local n = 0
         for slug, stem_path in pairs(written) do
           n = n + 1

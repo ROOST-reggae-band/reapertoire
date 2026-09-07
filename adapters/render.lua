@@ -92,7 +92,8 @@ end
 --
 -- `tracks` are { media_track, slug }. Returns a map of slug to path, plus a
 -- list of slugs whose file never appeared.
-function M.stems(dir, tracks, start_time, stop_time)
+function M.stems(dir, tracks, start_time, stop_time, log)
+  log = log or function() end
   if #tracks == 0 then return {}, {} end
   if not M.format_configured() then
     return {}, {}, "no render format configured in this project"
@@ -108,9 +109,31 @@ function M.stems(dir, tracks, start_time, stop_time)
     was_selected[i] = reaper.IsTrackSelected(t)
     reaper.SetTrackSelected(t, false)
   end
+
+  -- The master track is not part of CountTracks, so the loop above never
+  -- reaches it. Left selected it renders as a stem called Master, duplicating
+  -- the master mix inside the stems folder.
+  local master = reaper.GetMasterTrack(0)
+  local master_was_selected = reaper.IsTrackSelected(master)
+  reaper.SetTrackSelected(master, false)
+
   for _, entry in ipairs(tracks) do
-    reaper.SetTrackSelected(entry.media_track, true)
+    if entry.media_track then
+      reaper.SetTrackSelected(entry.media_track, true)
+    else
+      log("      no REAPER track behind slug %s", tostring(entry.slug))
+    end
   end
+
+  local selected = {}
+  for i = 0, reaper.CountTracks(0) - 1 do
+    local t = reaper.GetTrack(0, i)
+    if reaper.IsTrackSelected(t) then
+      local _, n = reaper.GetSetMediaTrackInfo_String(t, "P_NAME", "", false)
+      selected[#selected + 1] = n
+    end
+  end
+  log("      selected for stems: %s", #selected > 0 and table.concat(selected, ", ") or "NONE")
 
   reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", 0, true)
   reaper.GetSetProjectInfo(0, "RENDER_STARTPOS", start_time, true)
@@ -121,11 +144,24 @@ function M.stems(dir, tracks, start_time, stop_time)
   reaper.GetSetProjectInfo_String(0, "RENDER_FILE", dir, true)
   reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", "$track", true)
 
+  local applied = reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false)
+  log("      RENDER_SETTINGS=%d (2 = stems only)", applied)
+
   reaper.Main_OnCommand(RENDER_ACTION, 0)
+
+  local produced, idx = {}, 0
+  while true do
+    local name = reaper.EnumerateFiles(dir, idx)
+    if not name then break end
+    produced[#produced + 1] = name
+    idx = idx + 1
+  end
+  log("      files produced: %s", #produced > 0 and table.concat(produced, ", ") or "NONE")
 
   for i = 0, reaper.CountTracks(0) - 1 do
     reaper.SetTrackSelected(reaper.GetTrack(0, i), was_selected[i] or false)
   end
+  reaper.SetTrackSelected(master, master_was_selected)
   restore(saved)
 
   -- Files land under the track's name; the manifest wants the instrument slug,
@@ -148,6 +184,22 @@ function M.stems(dir, tracks, start_time, stop_time)
     end
     if found then written[entry.slug] = found else missing[#missing + 1] = entry.slug end
   end
+
+  -- This directory is created per take and holds only the stems asked for, so
+  -- anything else in it came from the render and is not wanted -- a stray
+  -- Master duplicating the master mix, most likely.
+  local keep = {}
+  for _, path in pairs(written) do keep[path] = true end
+  local index = 0
+  local strays = {}
+  while true do
+    local name = reaper.EnumerateFiles(dir, index)
+    if not name then break end
+    local full = dir .. "/" .. name
+    if not keep[full] then strays[#strays + 1] = full end
+    index = index + 1
+  end
+  for _, path in ipairs(strays) do os.remove(path) end
 
   return written, missing
 end
