@@ -243,6 +243,27 @@ function M.stems(dir, tracks, start_time, stop_time, log)
   return written, missing
 end
 
+-- Renders a short, deliberately poor-quality excerpt for analysis.
+--
+-- Mono at 11 kHz, which is what the recogniser downsamples to anyway: chroma
+-- tops out around 5 kHz and tempo needs less still. Rendering at project rate
+-- and stereo means REAPER encodes several times the data for no benefit, and
+-- the encode is the slow part.
+function M.probe(dir, filename, start_time, stop_time)
+  local saved_rate = reaper.GetSetProjectInfo(0, "RENDER_SRATE", 0, false)
+  local saved_channels = reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", 0, false)
+
+  reaper.GetSetProjectInfo(0, "RENDER_SRATE", 11025, true)
+  reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", 1, true)
+
+  local path, err = M.take(dir, filename, start_time, stop_time)
+
+  reaper.GetSetProjectInfo(0, "RENDER_SRATE", saved_rate, true)
+  reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", saved_channels, true)
+
+  return path, err
+end
+
 -- Renders [start, stop) to `dir/filename`. `filename` carries no extension --
 -- REAPER appends whatever the configured format uses.
 --

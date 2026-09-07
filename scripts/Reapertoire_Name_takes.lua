@@ -185,7 +185,19 @@ local function run_recognition()
   end
 
   local references = config.expand_path(cfg.sessionsRoot) .. "/" .. recognise.REFERENCES
-  local dir, paths = recognise.render_probes(render, pending, 40)
+  if not adapter.read_file(references) then
+    recognise_note = "No reference library yet at " .. references
+      .. " -- name and render a session first, then re-index."
+    return
+  end
+
+  -- 25 s is plenty for a chord distribution and a tempo, and the probe render
+  -- runs the whole FX chain, so every second counts.
+  local dir, paths, failures = recognise.render_probes(render, pending, 25)
+
+  local rendered = 0
+  for _ in pairs(paths) do rendered = rendered + 1 end
+
   local ranked = recognise.match(repo_dir, references, paths)
   recognise.remove_probes(dir)
 
@@ -198,8 +210,16 @@ local function run_recognition()
     end
   end
 
-  recognise_note = string.format("Suggested songs for %d of %d unnamed takes",
-    guessed, #pending)
+  if rendered == 0 then
+    recognise_note = "No probes rendered"
+      .. (failures[1] and (": " .. failures[1]) or "")
+  elseif guessed == 0 then
+    recognise_note = string.format(
+      "Rendered %d probes but the matcher returned nothing", rendered)
+  else
+    recognise_note = string.format("Suggested songs for %d of %d unnamed takes",
+      guessed, #pending)
+  end
 end
 
 local function apply_names()

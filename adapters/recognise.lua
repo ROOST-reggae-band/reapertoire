@@ -43,17 +43,21 @@ function M.render_probes(render, rows, seconds)
   local dir = string.format("%s/reapertoire-probe-%d", temp_dir(), os.time())
   reaper.RecursiveCreateDirectory(dir, 0)
 
-  local paths = {}
+  local paths, failures = {}, {}
   for _, row in ipairs(rows) do
     -- A slice from the middle: the opening of a take is often a count-in or
     -- someone still settling, which says little about which song it is.
     local length = row.stop - row.start
     local window = math.min(seconds or 120, length)
     local from = row.start + math.max(0, (length - window) / 2)
-    local path = render.take(dir, tostring(row.key), from, from + window)
-    if path then paths[row.key] = path end
+    local path, err = render.probe(dir, tostring(row.key), from, from + window)
+    if path then
+      paths[row.key] = path
+    else
+      failures[#failures + 1] = string.format("take %s: %s", tostring(row.key), tostring(err))
+    end
   end
-  return dir, paths
+  return dir, paths, failures
 end
 
 function M.remove_probes(dir)
