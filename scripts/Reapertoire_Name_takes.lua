@@ -45,6 +45,17 @@ do
   end
 end
 
+-- ReaImGui exposes enum values as accessor functions in some versions and as
+-- plain numbers in others. Resolve once rather than assuming either.
+local KEY = setmetatable({}, {
+  __index = function(t, name)
+    local v = ImGui[name]
+    if type(v) == "function" then v = v() end
+    rawset(t, name, v)
+    return v
+  end,
+})
+
 local ok, cfg = pcall(config.load, repo_dir, adapter.read_file)
 if not ok then
   reaper.MB("Configuration problem:\n\n" .. tostring(cfg), "Reapertoire", 0)
@@ -132,10 +143,10 @@ local function frame()
     ImGui.Separator(ctx)
 
     -- Keyboard: move between rows without leaving the filter box.
-    if ImGui.IsKeyPressed(ctx, ImGui.Key_DownArrow) then
+    if ImGui.IsKeyPressed(ctx, KEY.Key_DownArrow) then
       selected = math.min(#rows, selected + 1); query = ""
       if rows[selected] then seek_and_play(rows[selected]) end
-    elseif ImGui.IsKeyPressed(ctx, ImGui.Key_UpArrow) then
+    elseif ImGui.IsKeyPressed(ctx, KEY.Key_UpArrow) then
       selected = math.max(1, selected - 1); query = ""
       if rows[selected] then seek_and_play(rows[selected]) end
     end
@@ -154,8 +165,8 @@ local function frame()
 
       -- Enter accepts the top match and moves to the next unnamed row, which is
       -- the whole point: type two letters, press Enter, repeat.
-      if ImGui.IsKeyPressed(ctx, ImGui.Key_Enter)
-        or ImGui.IsKeyPressed(ctx, ImGui.Key_KeypadEnter) then
+      if ImGui.IsKeyPressed(ctx, KEY.Key_Enter)
+        or ImGui.IsKeyPressed(ctx, KEY.Key_KeypadEnter) then
         if hits[1] then
           row.song = hits[1].title
           naming.renumber(rows)
