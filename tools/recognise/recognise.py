@@ -11,6 +11,12 @@ scored by weighted distance. For a closed set of twenty-odd songs played at
 fairly consistent tempo this may rank the right song first most of the time. It
 is measured against real labelled takes before anything heavier is built.
 
+numpy and ffmpeg only, no librosa. librosa's beat tracker and CQT are compiled
+by numba on first call, which cost nineteen seconds before a single take was
+analysed -- more than the analysis of a whole session. Everything needed here is
+a windowed FFT and an autocorrelation, and ffmpeg decodes a minute of audio in
+under a second.
+
 Two commands:
 
     index  --sessions-root DIR --out refs.json
@@ -24,11 +30,13 @@ Two commands:
 
 import argparse
 import json
+import os
+import subprocess
 import sys
-import warnings
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-warnings.filterwarnings("ignore")
+import numpy as np
 
 # How much each feature counts. Tempo is weighted highest because arrangements
 # in this repertoire are fixed, which makes it unusually discriminative; chroma
@@ -36,65 +44,168 @@ warnings.filterwarnings("ignore")
 # can be cut short or extended.
 WEIGHTS = {"tempo": 0.40, "chroma": 0.45, "duration": 0.15}
 
-# Beyond this, a difference tells us nothing more -- two songs 60 s apart in
-# length are simply different, and 90 s apart is not "more different".
+# Beyond these, a difference tells us nothing more -- two songs a minute apart
+# in length are simply different, and ninety seconds apart is not "more
+# different".
 DURATION_SCALE = 60.0
 TEMPO_SCALE = 20.0
+
+# Chroma tops out around 5 kHz and tempo needs less still, so a higher rate buys
+# nothing and costs decode time.
+SAMPLE_RATE = 11025
+# Thirty seconds is ample for a chord distribution and a tempo, and halves the
+# decode.
+WINDOW_SECONDS = 30
+
+FFT_SIZE = 2048
+# A smaller hop is finer in time, which matters: tempo is read from integer
+# autocorrelation lags, and at hop 512 the usable lags near 140 BPM are 9 and
+# 10 -- a 14 BPM step with nothing between them.
+HOP = 256
+
+# Reggae sits comfortably inside this, and a wider range mostly invites the
+# tracker to lock onto half or double time.
+MIN_BPM, MAX_BPM = 60.0, 180.0
 
 SCHEMA = 1
 
 
-# 11 kHz and one minute. Chroma tops out around 5 kHz and tempo needs less
-# still, so higher rates buy nothing and cost a great deal: decoding three
-# minutes at 22 kHz took seven seconds a take, which is most of the run.
-SAMPLE_RATE = 11025
-WINDOW_SECONDS = 60
-
-
-def _load_audio(path, sr=SAMPLE_RATE, max_seconds=WINDOW_SECONDS, offset=0.0):
-    import librosa
-
-    y, actual_sr = librosa.load(
-        path, sr=sr, mono=True, duration=max_seconds, offset=offset
+def probe_duration(path):
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(path)],
+        capture_output=True, text=True,
     )
-    return y, actual_sr
+    try:
+        return float(out.stdout.strip())
+    except ValueError:
+        return 0.0
 
 
-def extract(path):
-    """Feature vector for one audio file."""
-    import librosa
-    import numpy as np
+def decode(path, offset, seconds, sr=SAMPLE_RATE):
+    """Mono float32 samples via ffmpeg. Seeking before -i is the fast path."""
+    out = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error",
+         "-ss", f"{offset:.3f}", "-t", f"{seconds:.3f}", "-i", str(path),
+         "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
+        capture_output=True,
+    )
+    return np.frombuffer(out.stdout, dtype=np.float32)
 
-    duration = float(librosa.get_duration(path=str(path)))
+
+def _spectrogram(y):
+    if y.size < FFT_SIZE:
+        return None, None
+    frames = 1 + (y.size - FFT_SIZE) // HOP
+    window = np.hanning(FFT_SIZE).astype(np.float32)
+
+    # One strided view rather than a Python loop over frames: the whole
+    # spectrogram is a single FFT call.
+    shape = (frames, FFT_SIZE)
+    strides = (y.strides[0] * HOP, y.strides[0])
+    blocks = np.lib.stride_tricks.as_strided(y, shape=shape, strides=strides)
+
+    spectrum = np.abs(np.fft.rfft(blocks * window, axis=1))
+    freqs = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
+    return spectrum, freqs
+
+
+def chroma_histogram(spectrum, freqs):
+    """Energy per pitch class, key-normalised."""
+    # Below 55 Hz is mostly rumble; above 4 kHz is mostly cymbals and air, and
+    # neither says much about which chord is being played.
+    usable = (freqs >= 55.0) & (freqs <= 4000.0)
+    freqs = freqs[usable]
+    spectrum = spectrum[:, usable]
+
+    # MIDI note number, then pitch class. A4 = 440 Hz = note 69.
+    midi = 69 + 12 * np.log2(freqs / 440.0)
+    pitch_class = np.rint(midi).astype(int) % 12
+
+    energy = spectrum.sum(axis=0)
+    histogram = np.zeros(12, dtype=np.float64)
+    np.add.at(histogram, pitch_class, energy)
+
+    total = histogram.sum()
+    if total > 0:
+        histogram /= total
+
+    # Rotate so the strongest pitch class sits first: the band may play a song
+    # in a different key, or a guitar may be tuned down, and neither makes it a
+    # different song.
+    root = int(np.argmax(histogram))
+    return np.roll(histogram, -root), root
+
+
+def estimate_tempo(spectrum):
+    """BPM from the autocorrelation of a spectral-flux onset envelope."""
+    if spectrum is None or spectrum.shape[0] < 8:
+        return 0.0
+
+    # Spectral flux: how much energy appeared since the previous frame. Rises
+    # are onsets; falls are decay and are discarded.
+    flux = np.diff(spectrum, axis=0)
+    flux = np.maximum(flux, 0).sum(axis=1)
+    flux -= flux.mean()
+    if not np.any(flux):
+        return 0.0
+
+    correlation = np.correlate(flux, flux, mode="full")[len(flux) - 1:]
+
+    frames_per_second = SAMPLE_RATE / HOP
+    min_lag = max(1, int(frames_per_second * 60.0 / MAX_BPM))
+    max_lag = min(len(correlation) - 1, int(frames_per_second * 60.0 / MIN_BPM))
+    if max_lag <= min_lag:
+        return 0.0
+
+    peak = min_lag + int(np.argmax(correlation[min_lag:max_lag + 1]))
+
+    # Parabolic interpolation around the peak. Lags are integers, so without
+    # this the reported tempo can only take the handful of values those lags
+    # happen to land on.
+    lag = float(peak)
+    if 0 < peak < len(correlation) - 1:
+        before, at, after = correlation[peak - 1], correlation[peak], correlation[peak + 1]
+        denominator = before - 2 * at + after
+        if denominator != 0:
+            shift = 0.5 * (before - after) / denominator
+            if -1.0 < shift < 1.0:
+                lag = peak + shift
+
+    if lag <= 0:
+        return 0.0
+    return float(60.0 * frames_per_second / lag)
+
+
+def extract(path, duration=None):
+    """Feature vector for one audio file.
+
+    `duration` is passed in wherever the caller already knows it -- the manifest
+    records it, and the panel knows its own region bounds. Asking ffprobe costs
+    a second subprocess per file, doubling the spawn count for a number we
+    already have.
+    """
+    if not duration or duration <= 0:
+        duration = probe_duration(path)
+    if duration <= 0:
+        return None
 
     # From the middle of the take: the opening is often a count-in or someone
     # still settling, which says little about which song this is.
     offset = max(0.0, (duration - WINDOW_SECONDS) / 2.0)
-    y, sr = _load_audio(path, offset=offset)
+    y = decode(path, offset, min(WINDOW_SECONDS, duration))
     if y.size == 0:
         return None
 
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    tempo = float(np.atleast_1d(tempo)[0])
+    spectrum, freqs = _spectrogram(y)
+    if spectrum is None:
+        return None
 
-    # CQT chroma rather than STFT: it is log-frequency, so it tracks musical
-    # pitch classes rather than linear frequency bins.
-    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-    histogram = chroma.mean(axis=1)
-
-    total = float(histogram.sum())
-    if total > 0:
-        histogram = histogram / total
-
-    # Key-normalised: rotate so the strongest pitch class sits first. The band
-    # may play a song in a different key, or a guitar may be tuned down, and
-    # neither makes it a different song.
-    root = int(np.argmax(histogram))
-    histogram = np.roll(histogram, -root)
+    histogram, root = chroma_histogram(spectrum, freqs)
 
     return {
         "duration": duration,
-        "tempo": tempo,
+        "tempo": estimate_tempo(spectrum),
         "chroma": [round(float(v), 6) for v in histogram],
         "root": root,
     }
@@ -102,26 +213,41 @@ def extract(path):
 
 def distance(a, b):
     """Weighted distance between two feature vectors. Lower is closer."""
-    import numpy as np
-
     d_dur = min(abs(a["duration"] - b["duration"]) / DURATION_SCALE, 1.0)
 
-    # Compare tempo against its half and double too: a beat tracker reporting
-    # 172 where the band feels 86 is a routine octave error, not a different
-    # song.
+    # Compare tempo against its half and double too: reporting 172 where the
+    # band feels 86 is a routine octave error, not a different song.
     ta, tb = a["tempo"], b["tempo"]
-    candidates = [abs(ta - tb), abs(ta - tb * 2), abs(ta - tb / 2)]
-    d_tempo = min(min(candidates) / TEMPO_SCALE, 1.0)
+    if ta <= 0 or tb <= 0:
+        d_tempo = 1.0
+    else:
+        gaps = [abs(ta - tb), abs(ta - tb * 2), abs(ta - tb / 2)]
+        d_tempo = min(min(gaps) / TEMPO_SCALE, 1.0)
 
     ca, cb = np.array(a["chroma"]), np.array(b["chroma"])
-    d_chroma = float(np.linalg.norm(ca - cb)) / np.sqrt(2.0)
-    d_chroma = min(d_chroma, 1.0)
+    d_chroma = min(float(np.linalg.norm(ca - cb)) / np.sqrt(2.0), 1.0)
 
     return (
         WEIGHTS["duration"] * d_dur
         + WEIGHTS["tempo"] * d_tempo
         + WEIGHTS["chroma"] * d_chroma
     )
+
+
+def extract_many(jobs):
+    """Features for several files at once.
+
+    `jobs` are (path, duration_or_None). Each extraction spends most of its time
+    waiting on an ffmpeg subprocess, so threads overlap almost perfectly despite
+    the GIL.
+    """
+    if not jobs:
+        return []
+    workers = min(len(jobs), (os.cpu_count() or 4))
+    if workers <= 1:
+        return [extract(p, d) for p, d in jobs]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(lambda job: extract(*job), jobs))
 
 
 def cmd_index(args):
@@ -132,6 +258,7 @@ def cmd_index(args):
     if not manifests:
         print(f"no manifests under {root}", file=sys.stderr)
 
+    pending = []
     for manifest_path in manifests:
         manifest = json.loads(manifest_path.read_text())
         for take in manifest.get("takes", []):
@@ -144,16 +271,18 @@ def cmd_index(args):
             if not master or not master.get("path"):
                 continue
             audio = Path(master["path"])
-            if not audio.exists():
-                continue
+            if audio.exists():
+                seconds = (take.get("durationMs") or 0) / 1000.0 or None
+                pending.append((song, audio, take.get("clientRef"), seconds))
 
-            features = extract(audio)
-            if not features:
-                continue
-            features["takeRef"] = take.get("clientRef")
-            features["source"] = str(audio)
-            library["songs"].setdefault(song, []).append(features)
-            print(f"indexed {song}: {audio.name}", file=sys.stderr)
+    for (song, audio, ref, _), features in zip(
+        pending, extract_many([(a, d) for _, a, _, d in pending])
+    ):
+        if not features:
+            continue
+        features["takeRef"] = ref
+        features["source"] = str(audio)
+        library["songs"].setdefault(song, []).append(features)
 
     Path(args.out).write_text(json.dumps(library, ensure_ascii=False, indent=2))
     counts = {s: len(v) for s, v in library["songs"].items()}
@@ -162,21 +291,14 @@ def cmd_index(args):
 
 def cmd_match(args):
     refs_path = Path(args.refs)
-    library = (
-        json.loads(refs_path.read_text())
-        if refs_path.exists()
-        else {"songs": {}}
-    )
+    library = json.loads(refs_path.read_text()) if refs_path.exists() else {"songs": {}}
     request = json.loads(Path(args.input).read_text())
 
-    results = {}
-    for item in request.get("takes", []):
-        audio = Path(item["path"])
-        if not audio.exists():
-            results[item["id"]] = []
-            continue
+    items = request.get("takes", [])
+    probes = extract_many([(Path(i["path"]), i.get("duration")) for i in items])
 
-        probe = extract(audio)
+    results = {}
+    for item, probe in zip(items, probes):
         if not probe:
             results[item["id"]] = []
             continue

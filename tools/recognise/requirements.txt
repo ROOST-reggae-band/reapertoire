@@ -1,5 +1,4 @@
-# Pinned: librosa pulls numpy, scipy, numba and soundfile, and an unpinned
-# resolve here has broken between minor releases before.
-librosa==0.10.2.post1
 numpy==1.26.4
-soundfile==0.12.1
+# numpy alone. librosa's beat tracker and CQT are numba-compiled on first call,
+# which cost nineteen seconds before a single take was analysed. Decoding is
+# ffmpeg's job, and everything else here is an FFT and an autocorrelation.
