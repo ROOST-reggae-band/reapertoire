@@ -139,6 +139,40 @@ function M.replace(takes, name_of, color)
   return #guids, skipped
 end
 
+-- Every region in the project, tool-made or not, in timeline order. The naming
+-- panel works on all of them: a region placed by hand deserves a song name as
+-- much as a detected one.
+function M.all()
+  local out = {}
+  each_region(function(enum_index, num, pos, rgnend, name)
+    out[#out + 1] = {
+      guid = guid_at(enum_index),
+      num = num,
+      start = pos,
+      stop = rgnend,
+      name = name,
+    }
+  end)
+  table.sort(out, function(a, b) return a.start < b.start end)
+  return out
+end
+
+-- Renames one region, found by GUID so it survives regions being added or
+-- removed between reading and writing. Position and extent are preserved.
+function M.rename(guid, new_name)
+  if not guid then return false end
+  local done = false
+  each_region(function(enum_index, num, pos, rgnend)
+    if guid_at(enum_index) == guid then
+      reaper.SetProjectMarker(num, true, pos, rgnend, new_name)
+      done = true
+      return false
+    end
+  end)
+  if done then reaper.UpdateArrange() end
+  return done
+end
+
 -- How many regions this tool currently believes it owns.
 function M.owned_count()
   local n = 0
