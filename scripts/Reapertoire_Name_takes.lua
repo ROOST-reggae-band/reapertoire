@@ -246,10 +246,25 @@ local function frame()
     end
     if row then
       if ImGui.Button(ctx, "Clear this name") then clear_row(row) end
-      if row.cleared then
-        ImGui.SameLine(ctx)
-        ImGui.Text(ctx, "(cleared on Apply)")
+      ImGui.SameLine(ctx)
+    end
+    -- Scoped to what is shown, like everything else here: with many rehearsals
+    -- in one project, clearing every region in the file is never the intent.
+    if ImGui.Button(ctx, "Clear all shown") then
+      local n = 0
+      for _, r in ipairs(view) do
+        if r.song or (r.original and r.original ~= "") then
+          clear_row(r)
+          n = n + 1
+        end
       end
+      status = string.format(
+        "%d name%s staged for clearing - Apply to write, Reload to discard",
+        n, n == 1 and "" or "s")
+    end
+    if row and row.cleared then
+      ImGui.SameLine(ctx)
+      ImGui.Text(ctx, "(cleared on Apply)")
     end
     ImGui.EndGroup(ctx)
 
