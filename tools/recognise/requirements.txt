@@ -1,0 +1,5 @@
+# Pinned: librosa pulls numpy, scipy, numba and soundfile, and an unpinned
+# resolve here has broken between minor releases before.
+librosa==0.10.2.post1
+numpy==1.26.4
+soundfile==0.12.1

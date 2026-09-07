@@ -309,8 +309,9 @@ local function frame()
           end
         end
 
+        -- No cap: the pane scrolls, and a fixed limit silently hid every song
+        -- past the tenth whenever the filter was empty.
         for i, song in ipairs(hits) do
-          if i > 10 then break end
           local marker = (i == 1) and "> " or "  "
           if ImGui.Selectable(ctx, marker .. song.title, i == 1) then
             row.song = song.title

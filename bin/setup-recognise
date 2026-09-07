@@ -1,0 +1,21 @@
+#!/bin/sh
+# Creates the virtualenv the song-recognition sidecar runs in.
+#
+# Its own environment on purpose: librosa pulls a large scientific stack, and
+# putting that in the system Python -- or in whichever interpreter REAPER
+# happens to be configured against -- makes the tool fragile in a way nothing
+# else here is.
+set -e
+cd "$(dirname "$0")/.."
+
+PY="${PYTHON:-python3.12}"
+if ! command -v "$PY" >/dev/null 2>&1; then
+  echo "$PY not found. Install it, or set PYTHON to an interpreter you have." >&2
+  exit 1
+fi
+
+echo "Creating .venv with $($PY -V)"
+"$PY" -m venv .venv
+./.venv/bin/pip install --quiet --upgrade pip
+./.venv/bin/pip install --quiet -r tools/recognise/requirements.txt
+echo "Ready: $(./.venv/bin/python -c 'import librosa; print("librosa", librosa.__version__)')"
