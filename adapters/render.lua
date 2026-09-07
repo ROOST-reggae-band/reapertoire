@@ -279,17 +279,24 @@ end
 -- tops out around 5 kHz and tempo needs less still. Rendering at project rate
 -- and stereo means REAPER encodes several times the data for no benefit, and
 -- the encode is the slow part.
-function M.probe(dir, filename, start_time, stop_time)
+function M.probe(dir, filename, start_time, stop_time, format)
   local saved_rate = reaper.GetSetProjectInfo(0, "RENDER_SRATE", 0, false)
   local saved_channels = reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", 0, false)
+  local _, saved_format = reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", "", false)
 
   reaper.GetSetProjectInfo(0, "RENDER_SRATE", 11025, true)
   reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", 1, true)
+  -- Uncompressed when one has been captured: probes are decoded by ffmpeg and
+  -- analysed at 11 kHz mono, so encoding them is pure cost.
+  if format and format ~= "" then
+    reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", format, true)
+  end
 
   local path, err = M.take(dir, filename, start_time, stop_time)
 
   reaper.GetSetProjectInfo(0, "RENDER_SRATE", saved_rate, true)
   reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", saved_channels, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", saved_format, true)
 
   return path, err
 end
@@ -299,13 +306,13 @@ end
 --
 -- `jobs` are { key, dir, name, start, stop }. Returns { key = path } and a list
 -- of failures.
-function M.probe_batch(jobs)
+function M.probe_batch(jobs, format)
   local fx = bypass_fx()
   reaper.PreventUIRefresh(1)
 
   local paths, failures = {}, {}
   for _, job in ipairs(jobs) do
-    local path, err = M.probe(job.dir, job.name, job.start, job.stop)
+    local path, err = M.probe(job.dir, job.name, job.start, job.stop, format)
     if path then
       paths[job.key] = path
     else

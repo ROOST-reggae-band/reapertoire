@@ -42,7 +42,7 @@ end
 -- extraction fast.
 --
 -- `rows` are { key, start, stop }. Returns { key = path }.
-function M.render_probes(render, rows, seconds)
+function M.render_probes(render, rows, seconds, format)
   local dir = string.format("%s/reapertoire-probe-%d", temp_dir(), os.time())
   reaper.RecursiveCreateDirectory(dir, 0)
 
@@ -63,7 +63,7 @@ function M.render_probes(render, rows, seconds)
   end
 
   local started = reaper.time_precise()
-  local paths, failures = render.probe_batch(jobs)
+  local paths, failures = render.probe_batch(jobs, format)
   local elapsed = reaper.time_precise() - started
 
   return dir, paths, failures, meta, elapsed
