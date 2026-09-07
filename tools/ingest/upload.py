@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -38,8 +39,26 @@ from pathlib import Path
 # outlive that, so a 403 mid-upload is normal operation rather than an error:
 # re-declare the take, take the fresh URLs, carry on.
 EXPIRY_STATUS = 403
-RETRY_STATUSES = (429, 500, 502, 503, 504)
+
+# Server-side faults only. The contract is explicit that the ingest surface has
+# no rate limiting in v1 and never returns 429 -- "don't build retry-on-429
+# handling around a code that doesn't exist yet" -- so a 429 from anywhere is
+# something other than the ingest API answering, and retrying it is wrong.
+RETRY_STATUSES = (500, 502, 503, 504)
 MAX_ATTEMPTS = 4
+
+# How many times a take's presigned URLs may be re-issued before the run gives
+# up on it. Each round buys another hour, so this covers a genuinely slow push
+# without letting a server that keeps returning dead URLs spin forever.
+MAX_URL_REFRESHES = 3
+
+# The vocabularies the server validates against. Checked here so a manifest is
+# rejected whole, before anything has been declared, rather than one 422 at a
+# time after the event exists.
+EVENT_KINDS = ("rehearsal", "concert", "session")
+AUDIO_FORMATS = ("opus", "mp3", "flac", "wav")
+TIERS = ("lossy", "lossless")
+HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
 
 
 class IngestError(Exception):
@@ -85,8 +104,8 @@ class Client:
             if 200 <= status < 300:
                 return payload
             if status in RETRY_STATUSES and attempt < MAX_ATTEMPTS:
-                # Retry-After is authoritative when the server sets it; the
-                # fallback backs off rather than hammering.
+                # Exponential, so a server that is down rather than briefly
+                # busy is not hammered while it comes back.
                 time.sleep(min(2 ** attempt, 30))
                 continue
             raise IngestError(_describe(status, payload))
@@ -95,14 +114,14 @@ class Client:
     # ------------------------------------------------------------- operations
 
     def instruments(self):
+        """The live slug vocabulary: {"instruments": [{"slug", "label"}]}.
+
+        Entries are read leniently -- a bare slug string is accepted too --
+        because only the slug is wanted here and the label is presentation.
+        """
         payload = self._json("GET", "/instruments")
-        # The contract does not pin the envelope, so accept either shape.
-        if isinstance(payload, list):
-            return {i if isinstance(i, str) else i.get("slug") for i in payload}
-        for key in ("instruments", "slugs", "data"):
-            if key in payload:
-                return {i if isinstance(i, str) else i.get("slug") for i in payload[key]}
-        return set()
+        entries = payload if isinstance(payload, list) else payload.get("instruments", [])
+        return {i if isinstance(i, str) else i.get("slug") for i in entries}
 
     def declare_event(self, event):
         return self._json("POST", "/events", event)
@@ -138,7 +157,7 @@ def _describe(status, payload):
     extra = ""
     # The contract's 409s and 422s carry structured context alongside the
     # error, and it is the part that says what to do about them.
-    for key in ("missing", "candidates", "valid", "instruments"):
+    for key in ("missing", "candidates", "validSlugs"):
         if key in (payload or {}):
             extra = f" ({key}: {json.dumps(payload[key])[:200]})"
             break
@@ -156,23 +175,112 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def held_at(event):
+    """The session start as an aware datetime, or None if it cannot be one.
+
+    The contract wants ISO-8601 *with a numeric offset* -- "the offset is how
+    it knows what you meant" -- so a naive timestamp is as useless as a
+    missing one and is rejected the same way. Python before 3.11 will not
+    parse a trailing `Z`, which is a perfectly ordinary thing for a manifest
+    to carry, so it is normalised rather than refused.
+    """
+    held = event.get("heldAt")
+    if not held:
+        return None
+    try:
+        started = datetime.fromisoformat(str(held).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return started if started.utcoffset() is not None else None
+
+
 def recorded_at(event, take):
     """Wall-clock time of a take, from the session's start plus its offset.
 
     Take positions are absolute project seconds, which say nothing about when
     something happened; the session's heldAt anchors them.
     """
-    held = event.get("heldAt")
-    if not held:
-        return None
-    try:
-        started = datetime.fromisoformat(held)
-    except ValueError:
+    started = held_at(event)
+    if started is None:
         return None
     offset = (take.get("start") or 0) - (event.get("rangeStart") or 0)
     if offset < 0:
         offset = 0
     return (started + timedelta(seconds=offset)).isoformat()
+
+
+def _asset_problems(asset, where):
+    """One asset against the server's discriminated union of asset shapes."""
+    problems = []
+    kind = asset.get("kind")
+    tier = asset.get("tier", "lossy")
+    fmt = asset.get("format")
+
+    if kind not in ("master", "stem", "peaks"):
+        return [f"{where}: kind {kind!r} is none of master, stem, peaks"]
+    if tier not in TIERS:
+        problems.append(f"{where}: tier {tier!r} is neither lossy nor lossless")
+
+    if kind == "peaks":
+        if fmt != "json":
+            problems.append(f"{where}: peaks must be json, not {fmt!r}")
+    else:
+        if fmt not in AUDIO_FORMATS:
+            problems.append(
+                f"{where}: format {fmt!r} is not one of " + ", ".join(AUDIO_FORMATS))
+        if kind == "stem" and not asset.get("instrument"):
+            problems.append(f"{where}: a stem must name the instrument it isolates")
+
+    size = asset.get("bytes")
+    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+        problems.append(f"{where}: bytes must be a positive whole number, not {size!r}")
+
+    digest = asset.get("sha256")
+    # Optional, but a malformed one is a manifest bug rather than something to
+    # quietly drop: the hash is the strongest retry signal the server has, and
+    # a wrong one silently costs a re-upload of every take on every resume.
+    if digest is not None and not HEX_SHA256.match(str(digest)):
+        problems.append(f"{where}: sha256 {digest!r} is not a 64-character hex digest")
+    return problems
+
+
+def contract_problems(event, takes):
+    """Everything the ingest schemas require that a manifest can lack.
+
+    The server enforces all of this, but only once the event is declared and
+    the takes are going in one at a time, and it names one failing field per
+    response. A manifest that cannot be ingested should say so whole, before
+    anything on the server has moved -- the same reason `verify_assets` runs
+    up front.
+    """
+    problems = []
+
+    if event.get("kind") not in EVENT_KINDS:
+        problems.append(
+            f"the session kind is {event.get('kind')!r}, not one of "
+            + ", ".join(EVENT_KINDS))
+    if held_at(event) is None:
+        problems.append(
+            f"the session date {event.get('heldAt')!r} is not an ISO-8601 "
+            "timestamp with a UTC offset")
+
+    for index, take in enumerate(takes, 1):
+        where = f"take {index}"
+        if not take.get("clientRef"):
+            problems.append(f"{where} has no region GUID to identify it by")
+        # The server requires a title: a take nobody named cannot be ingested,
+        # and creating a stub song called nothing is worse than stopping.
+        if not (take.get("song") or "").strip():
+            problems.append(f"{where} has no song")
+        if recorded_at(event, take) is None:
+            problems.append(f"{where} has no time it was recorded at")
+        assets = take.get("assets") or []
+        if not assets:
+            problems.append(f"{where} rendered no files")
+        for asset in assets:
+            problems.extend(_asset_problems(asset, f"{where} {asset.get('kind')}"))
+
+    return problems
 
 
 def verify_assets(take, base_dir):
@@ -227,7 +335,9 @@ def build_take_payload(event, take):
         },
         "recordedAt": recorded_at(event, take),
         "durationMs": take.get("durationMs"),
-        "label": take.get("label"),
+        # Nullable but min-length-1 where present, so a blank label has to go
+        # as null rather than as "".
+        "label": (take.get("label") or "").strip() or None,
         "instruments": take.get("instruments", []),
         "assets": assets,
     }
@@ -259,6 +369,11 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
                 + ", ".join(sorted(vocabulary))
             )
 
+    problems = contract_problems(event, takes)
+    if problems:
+        raise IngestError("the manifest cannot be ingested as it stands:\n  "
+                          + "\n  ".join(problems))
+
     problems = []
     for take in takes:
         problems.extend(verify_assets(take, base_dir))
@@ -278,7 +393,10 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
             "kind": event.get("kind", "rehearsal"),
             "heldAt": event.get("heldAt"),
             "venue": event.get("venue"),
-            "title": event.get("title"),
+            # The manifest calls it `label`; the contract calls it `title`.
+            # Without the fallback the name of every session was dropped on
+            # the floor, since nothing upstream ever writes `title`.
+            "title": event.get("title") or event.get("label"),
             "notes": event.get("notes"),
         }
     )
@@ -296,7 +414,13 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
             by_path[key] = asset["_resolved"]
 
         pending = declared.get("uploads", [])
-        for attempt in range(2):
+        # URLs live an hour, and a take with a dozen stems on a domestic uplink
+        # can outlive more than one of them. The old fixed pair of rounds meant
+        # a third expiry silently left files unsent, surfacing only as
+        # `assets_incomplete` at commit; the cap is now high enough that a slow
+        # push finishes and low enough that a server handing back dead URLs
+        # stops rather than spinning.
+        for refreshes in range(MAX_URL_REFRESHES + 1):
             still_pending = []
             for slot in pending:
                 if slot.get("status") == "ready" or not slot.get("url"):
@@ -315,6 +439,12 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
 
             if not still_pending:
                 break
+            if refreshes == MAX_URL_REFRESHES:
+                raise IngestError(
+                    f"{len(still_pending)} uploads for {take.get('song')} - "
+                    f"{take.get('label')} still expiring after "
+                    f"{MAX_URL_REFRESHES} refreshes; giving up rather than looping"
+                )
             # Expired presigned URLs. Documented as normal operation on a slow
             # uplink, not an error path.
             log(f"  refreshing {len(still_pending)} expired upload URLs")

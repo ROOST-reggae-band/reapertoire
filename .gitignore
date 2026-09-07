@@ -4,3 +4,8 @@ test/fixtures/*.local.json
 
 # Decoded-audio cache written by the recogniser tuning experiments.
 audio.pkl
+
+# Byte-compiled Python. The uploader is imported by its own tests, so this
+# gets regenerated on every run and turned up in every diff.
+__pycache__/
+*.pyc

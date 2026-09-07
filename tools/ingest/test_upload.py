@@ -19,9 +19,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from upload import Client, IngestError, recorded_at, upload_session  # noqa: E402
+from upload import (  # noqa: E402
+    MAX_URL_REFRESHES, Client, IngestError, recorded_at, upload_session,
+)
 
 TOKEN = "blk_test_secret"
+
+# The schema wants a real digest: 64 hex characters, not a placeholder.
+DIGEST = "a" * 64
 
 
 class FakeIngest(BaseHTTPRequestHandler):
@@ -63,7 +68,9 @@ class FakeIngest(BaseHTTPRequestHandler):
         if not self._authorised():
             return
         if self.path.endswith("/instruments"):
-            self._send(200, {"instruments": self.state["vocabulary"]})
+            self._send(200, {"instruments": [
+                {"slug": slug, "label": slug.title()} for slug in self.state["vocabulary"]
+            ]})
         elif "/uploads" in self.path:
             self.state["refreshes"] += 1
             self._send(200, {"uploads": self.state["uploads_after_refresh"]})
@@ -107,8 +114,10 @@ class FakeIngest(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         self.rfile.read(length)
         if self.path in self.state["expired_urls"]:
-            # One expiry per URL, so a retry after refreshing succeeds.
-            self.state["expired_urls"].discard(self.path)
+            # One expiry per URL, so a retry after refreshing succeeds --
+            # unless the test is exercising a server that never stops.
+            if not self.state.get("always_expired"):
+                self.state["expired_urls"].discard(self.path)
             self._send(403, {"error": {"code": "expired", "message": "presigned url expired"}})
             return
         self.state["puts"].append((self.path, length))
@@ -123,7 +132,7 @@ def fresh_state():
         "events": [], "takes": [], "commits": [], "puts": [],
         "known_events": set(), "expired_urls": set(),
         "uploads": [], "uploads_after_refresh": [], "refreshes": 0,
-        "fail_takes_with": None,
+        "fail_takes_with": None, "always_expired": False,
     }
 
 
@@ -165,7 +174,7 @@ class ServerCase(unittest.TestCase):
             "assets": [{
                 "kind": "master", "tier": "lossy", "format": "opus",
                 "path": str(master), "bytes": master.stat().st_size,
-                "sha256": "abc", "sampleRate": 48000, "channels": 2,
+                "sha256": DIGEST, "sampleRate": 48000, "channels": 2,
             }],
         }]
         manifest = {
@@ -313,6 +322,147 @@ class TestRefusals(ServerCase):
         message = str(caught.exception)
         self.assertIn("song_not_found", message)
         self.assertIn("Some Song", message)
+
+
+class TestContractShape(ServerCase):
+    """The schemas the server validates against, checked before anything moves.
+
+    Every one of these is a 422 on the server -- but only after the event has
+    been declared and takes are going in one at a time, which leaves half a
+    session ingested and a message naming one field.
+    """
+
+    def refusal(self, *, takes=None, event=None):
+        with self.assertRaises(IngestError) as caught:
+            upload_session(self.write_manifest(takes=takes, event=event),
+                           self.client, log=lambda *_: None)
+        self.assertEqual(self.state["events"], [], "nothing declared")
+        return str(caught.exception)
+
+    def take(self, **overrides):
+        master = self.root / "master.opus"
+        master.write_bytes(b"audio" * 100)
+        take = {
+            "clientRef": "reaper:region-guid:{A}", "song": "A Song",
+            "label": "take 1", "start": 1100, "durationMs": 254300,
+            "instruments": ["bass"],
+            "assets": [{
+                "kind": "master", "tier": "lossy", "format": "opus",
+                "path": str(master), "bytes": master.stat().st_size,
+                "sha256": DIGEST,
+            }],
+        }
+        take.update(overrides)
+        return [take]
+
+    def test_a_take_nobody_named_is_refused(self):
+        # `song.title` is required. Ingesting an unnamed take would create a
+        # stub song called nothing at all.
+        self.assertIn("has no song", self.refusal(takes=self.take(song=None)))
+
+    def test_a_session_date_without_an_offset_is_refused(self):
+        # "The offset is how it knows what you meant."
+        message = self.refusal(event={
+            "clientRef": "sess-1", "kind": "rehearsal",
+            "heldAt": "2026-09-05T19:30:00", "rangeStart": 1000,
+        })
+        self.assertIn("UTC offset", message)
+
+    def test_a_session_date_in_zulu_is_accepted(self):
+        # Python before 3.11 will not parse a trailing Z, and a manifest
+        # carrying one is perfectly ordinary.
+        self.state["uploads"] = [self.upload_slot()]
+        upload_session(self.write_manifest(event={
+            "clientRef": "sess-1", "kind": "rehearsal",
+            "heldAt": "2026-09-05T17:30:00Z", "rangeStart": 1000,
+        }), self.client, log=lambda *_: None)
+        self.assertEqual(self.state["takes"][0]["recordedAt"], "2026-09-05T17:31:40+00:00")
+
+    def test_an_unknown_session_kind_is_refused(self):
+        message = self.refusal(event={
+            "clientRef": "sess-1", "kind": "jam",
+            "heldAt": "2026-09-05T19:30:00+02:00", "rangeStart": 1000,
+        })
+        self.assertIn("rehearsal", message)
+
+    def test_a_placeholder_hash_is_refused(self):
+        take = self.take()
+        take[0]["assets"][0]["sha256"] = "abc"
+        self.assertIn("64-character hex", self.refusal(takes=take))
+
+    def test_a_stem_without_an_instrument_is_refused(self):
+        take = self.take()
+        take[0]["assets"][0]["kind"] = "stem"
+        self.assertIn("instrument", self.refusal(takes=take))
+
+    def test_peaks_in_anything_but_json_is_refused(self):
+        take = self.take()
+        take[0]["assets"][0].update(kind="peaks", format="opus")
+        self.assertIn("peaks must be json", self.refusal(takes=take))
+
+    def test_the_whole_manifest_is_reported_at_once(self):
+        take = self.take(song=None)
+        take[0]["assets"][0]["sha256"] = "abc"
+        message = self.refusal(takes=take)
+        self.assertIn("has no song", message)
+        self.assertIn("64-character hex", message)
+
+
+class TestEventPayload(ServerCase):
+    def test_the_session_label_is_sent_as_the_title(self):
+        # The manifest calls it `label` and the contract calls it `title`;
+        # without the mapping every session arrived nameless.
+        self.state["uploads"] = [self.upload_slot()]
+        upload_session(self.write_manifest(), self.client, log=lambda *_: None)
+        self.assertEqual(self.state["events"][0]["title"], "practice")
+
+    def test_a_blank_take_label_is_sent_as_null_not_empty(self):
+        # Nullable, but min-length-1 where present.
+        self.state["uploads"] = [self.upload_slot()]
+        path = self.write_manifest()
+        manifest = json.loads(path.read_text())
+        manifest["takes"][0]["label"] = "   "
+        path.write_text(json.dumps(manifest))
+        upload_session(path, self.client, log=lambda *_: None)
+        self.assertIsNone(self.state["takes"][0]["label"])
+
+
+class TestRetryPolicy(ServerCase):
+    def test_a_429_is_not_retried(self):
+        # The contract is explicit that the ingest surface returns no 429 in
+        # v1, so one is something other than the API answering.
+        self.state["fail_takes_with"] = (
+            429, {"error": {"code": "slow_down", "message": "too many"}})
+        with self.assertRaises(IngestError) as caught:
+            upload_session(self.write_manifest(), self.client, log=lambda *_: None)
+        self.assertIn("429", str(caught.exception))
+        self.assertEqual(len(self.state["takes"]), 1, "declared once, not retried")
+
+    def test_urls_that_keep_expiring_give_up_rather_than_loop(self):
+        self.state["uploads"] = [self.upload_slot(path="/put/expired")]
+        self.state["uploads_after_refresh"] = [self.upload_slot(path="/put/expired")]
+        self.state["expired_urls"] = {"/put/expired"}
+        self.state["always_expired"] = True
+
+        with self.assertRaises(IngestError) as caught:
+            upload_session(self.write_manifest(), self.client, log=lambda *_: None)
+        self.assertIn("refreshes", str(caught.exception))
+        self.assertEqual(self.state["refreshes"], MAX_URL_REFRESHES)
+
+
+class TestErrorContext(ServerCase):
+    def test_a_422_names_the_valid_slugs_the_server_listed(self):
+        # The server's key is `validSlugs`; looking for anything else threw
+        # away the part of the response that says what to do about it.
+        self.state["fail_takes_with"] = (422, {
+            "error": {"code": "unknown_instrument", "message": "Unknown slug(s): kazoo."},
+            "validSlugs": ["bass", "drums"],
+        })
+        with self.assertRaises(IngestError) as caught:
+            upload_session(self.write_manifest(), self.client, log=lambda *_: None)
+        message = str(caught.exception)
+        self.assertIn("unknown_instrument", message)
+        self.assertIn("drums", message)
 
 
 class TestDryRun(ServerCase):

@@ -400,12 +400,18 @@ without pushing the first eight again. Presigned URLs live an hour and a slow
 uplink outlives that, so an expired URL is refreshed and retried rather than
 treated as a failure.
 
-**Two checks run before anything is declared**, because a take declared and
+**Three checks run before anything is declared**, because a take declared and
 then not uploaded is left stuck mid-ingest on the server:
 
 - Instrument slugs are validated against the server's live vocabulary. Unknown
   slugs are rejected with 422 by design, and the message names both the
   offending slugs and the valid ones.
+- The manifest is checked against the shapes the API's schemas require: a song
+  title on every take, a session date carrying a UTC offset, a known session
+  kind, at least one rendered file per take, and well-formed hashes. The server
+  enforces all of this too, but one field at a time and only once the event is
+  already declared -- so a manifest that cannot be ingested says so whole, and
+  says so first.
 - Every asset is confirmed present and unchanged in size since the manifest was
   written. A manifest outlives its files when a folder is moved or a render is
   interrupted.
