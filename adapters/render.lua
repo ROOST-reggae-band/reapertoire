@@ -51,6 +51,24 @@ function M.format_configured()
   return fmt ~= nil and fmt ~= ""
 end
 
+-- What the rendered files will actually be, so the manifest can state it rather
+-- than guess. RENDER_SRATE is 0 when the project rate is being used, and
+-- PROJECT_SRATE only applies when PROJECT_SRATE_USE is set -- otherwise the
+-- rate is the audio device's.
+function M.output_format()
+  local srate = reaper.GetSetProjectInfo(0, "RENDER_SRATE", 0, false)
+  if srate == 0 then
+    if reaper.GetSetProjectInfo(0, "PROJECT_SRATE_USE", 0, false) ~= 0 then
+      srate = reaper.GetSetProjectInfo(0, "PROJECT_SRATE", 0, false)
+    else
+      local _, device_rate = reaper.GetAudioDeviceInfo("SRATE")
+      srate = tonumber(device_rate) or 0
+    end
+  end
+  local channels = reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", 0, false)
+  return math.floor(srate), math.floor(channels)
+end
+
 function M.file_info(path)
   local f = io.open(path, "rb")
   if not f then return nil end

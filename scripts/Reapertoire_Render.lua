@@ -112,7 +112,7 @@ if how == "new" then
   session = {
     id = reaper.genGuid(""),
     kind = (kind ~= "" and kind) or "rehearsal",
-    heldAt = date .. "T" .. (guess_time or "00:00") .. ":00",
+    heldAt = session_lib.iso8601(date, guess_time),
     label = label ~= "" and label or "session",
     range = { start = sel_start, stop = sel_stop },
     takes = {},
@@ -145,6 +145,26 @@ if #rows == 0 then
   return
 end
 
+-- Which instruments actually play on each take. Free to compute here, where the
+-- audio and the project are both to hand, and impossible to reconstruct from
+-- the rendered mix afterwards.
+log("Reading levels to work out which instruments play on each take...")
+do
+  local pipeline = require("lib.pipeline")
+  local presence = require("lib.presence")
+  local d = cfg.detection
+  local tracks, items = adapter.collect(sel_start, sel_stop, d.frameRateHz, cfg.tracks)
+  local classified = pipeline.classify({
+    tracks = tracks, items = items,
+    sel_start = sel_start, sel_stop = sel_stop, detection = d,
+  })
+  local opts = pipeline.detection_opts(d)
+  for _, row in ipairs(rows) do
+    row.instruments = presence.instruments_in(
+      classified.tracks, row, sel_start, d.frameRateHz, opts)
+  end
+end
+
 local root = config.expand_path(cfg.sessionsRoot)
 local out_dir = session.outputDir or (root .. "/" .. session_lib.folder_name(session))
 session.outputDir = out_dir
@@ -156,6 +176,7 @@ for i, row in ipairs(rows) do
   local folder = string.format("%s/%02d-%s-%s", out_dir, i, text.slug(row.song), text.slug(row.label))
   reaper.RecursiveCreateDirectory(folder, 0)
 
+  local srate, channels = render.output_format()
   local path, err = render.take(folder, "master", row.start, row.stop)
   if not path then
     log("  %2d  %-24s FAILED: %s", i, row.song, tostring(err))
@@ -169,10 +190,13 @@ for i, row in ipairs(rows) do
       bytes = bytes,
       sha256 = render.sha256(path),
       durationMs = math.floor((row.stop - row.start) * 1000 + 0.5),
+      sampleRate = srate > 0 and srate or nil,
+      channels = channels > 0 and channels or nil,
     } }
     rendered[#rendered + 1] = row
-    log("  %2d  %-24s %s (%.1f MB)", i, row.song,
-      path:match("([^/\\]+)$"), (bytes or 0) / 1048576)
+    log("  %2d  %-24s %s (%.1f MB)  %s", i, row.song,
+      path:match("([^/\\]+)$"), (bytes or 0) / 1048576,
+      table.concat(row.instruments or {}, ", "))
   end
 end
 

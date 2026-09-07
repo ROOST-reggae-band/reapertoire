@@ -144,4 +144,31 @@ function T.an_impossible_date_is_rejected_rather_than_believed()
   h.assert_eq(session.date_from_filename("x-991399_9999.wav"), nil)
 end
 
+function T.iso8601_carries_an_offset()
+  local iso = session.iso8601("2026-09-05", "19:30")
+  assert(iso:match("^2026%-09%-05T19:30:00[+%-]%d%d:%d%d$"),
+    "expected an offset, got " .. tostring(iso))
+end
+
+function T.iso8601_defaults_a_missing_time_to_midnight()
+  local iso = session.iso8601("2026-09-05")
+  assert(iso:match("^2026%-09%-05T00:00:00"), iso)
+end
+
+function T.iso8601_rejects_a_date_it_cannot_parse()
+  h.assert_eq(session.iso8601("5th of September"), nil)
+  h.assert_eq(session.iso8601("2026-9-5"), nil)
+end
+
+function T.the_offset_is_for_the_sessions_own_date()
+  -- A summer and a winter rehearsal in a DST zone must not share an offset
+  -- just because they were filed on the same day.
+  local summer = session.iso8601("2026-07-01", "12:00"):match("([+%-]%d%d:%d%d)$")
+  local winter = session.iso8601("2026-01-01", "12:00"):match("([+%-]%d%d:%d%d)$")
+  if os.date("*t", os.time({year=2026,month=7,day=1,hour=12})).isdst
+     ~= os.date("*t", os.time({year=2026,month=1,day=1,hour=12})).isdst then
+    assert(summer ~= winter, "expected different offsets across DST, both " .. summer)
+  end
+end
+
 return T
