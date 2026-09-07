@@ -175,6 +175,36 @@ as its *closest* reference take — a band plays a tune differently on different
 nights, and one good match is evidence. Scores are reported as `1 - distance`,
 so higher is better, and the top three are offered.
 
+### Confidence is a margin, not a threshold
+
+A guess is pre-selected only when it beats the runner-up by `minMargin`
+(default 0.05). It is deliberately not an absolute score floor.
+
+Measured by leave-one-out over a real library, every score landed between 0.74
+and 0.99, so any absolute floor pre-selects wrong answers as readily as right
+ones. The wrong answers were characteristically the ones sitting level with
+their runner-up — two songs at 0.91 apiece — while correct ones tended to pull
+clear. The gap discriminates; the height does not.
+
+Below the margin nothing is pre-selected. A blank field is quicker to deal with
+than a plausible wrong answer somebody has to notice and undo.
+
+### How well it works
+
+On a library of sixteen takes across eleven songs, leave-one-out over the nine
+takes whose song had another reference to match against:
+
+| | |
+|---|---|
+| top-1 correct | 5/9 |
+| top-3 correct | 9/9 |
+| pre-selected under a 0.05 margin | 2, both correct |
+
+Top-3 is the number that matters for the workflow, since the panel offers a
+short list rather than a verdict. This is a small sample and the weights have
+not been fitted to it — they are prior judgement, and re-measuring as the
+library grows is the point of recording the method here.
+
 ### What it deliberately does not do
 
 No waveform peaks: the envelope says nothing about *which* song. No melody

@@ -386,11 +386,21 @@ local function frame()
           hits, from_guess = ranked, true
         end
 
-        -- Below the floor there is no pre-selection at all: a blank field is
+        -- Confidence is the MARGIN over the runner-up, not the absolute score.
+        -- Measured over held-out takes, every score landed between 0.74 and
+        -- 0.99, so any absolute floor pre-selects the wrong answers as readily
+        -- as the right ones -- while the wrong ones were the ones sitting
+        -- level with their runner-up.
+        --
+        -- Below the margin there is no pre-selection at all: a blank field is
         -- quicker to deal with than a plausible wrong answer somebody has to
         -- notice and undo.
-        local floor = cfg.recognition and cfg.recognition.minScore or 0.75
-        local confident = from_guess and hits[1] and (hits[1].score or 0) >= floor
+        local margin = cfg.recognition and cfg.recognition.minMargin or 0.05
+        local confident = false
+        if from_guess and hits[1] then
+          local second = hits[2] and hits[2].score or 0
+          confident = ((hits[1].score or 0) - second) >= margin
+        end
 
         -- Enter accepts the top match and jumps to the next unnamed take: type
         -- two letters, press Enter, repeat.

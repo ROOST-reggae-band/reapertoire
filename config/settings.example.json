@@ -48,6 +48,6 @@
     }
   ],
   "recognition": {
-    "minScore": 0.75
+    "minMargin": 0.05
   }
 }
