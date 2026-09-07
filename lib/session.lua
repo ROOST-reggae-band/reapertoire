@@ -33,26 +33,56 @@ function M.encode(doc)
   return json.encode(doc, { indent = true })
 end
 
-local function overlaps(a_start, a_stop, b_start, b_stop)
-  return a_start < b_stop and b_start < a_stop
+local function overlap_seconds(a_start, a_stop, b_start, b_stop)
+  local from = math.max(a_start, b_start)
+  local to = math.min(a_stop, b_stop)
+  return math.max(0, to - from)
 end
+
+-- How much of the shorter span the two share. Comparing against the shorter one
+-- means a short selection inside a long session still counts as that session,
+-- which is the common case when re-rendering part of a rehearsal.
+local function overlap_ratio(a_start, a_stop, b_start, b_stop)
+  local shared = overlap_seconds(a_start, a_stop, b_start, b_stop)
+  if shared <= 0 then return 0 end
+  local shortest = math.min(a_stop - a_start, b_stop - b_start)
+  if shortest <= 0 then return 0 end
+  return shared / shortest
+end
+
+-- Below this, a selection touching a session is treated as a different
+-- rehearsal that happens to abut it, not the same one. Rehearsals sit end to
+-- end on the timeline, so a few seconds of overlap is a near miss rather than
+-- a match, and silently filing takes under the neighbouring session is worse
+-- than asking.
+M.MATCH_RATIO = 0.5
 
 -- Which session a time range belongs to.
 --
 -- Returns the session and "existing", or nil and "new" when nothing overlaps,
 -- or nil and "ambiguous" plus the candidates when the range spans two. Guessing
 -- between two rehearsals would file takes under the wrong date, so it refuses.
+-- Returns the session and "existing"; nil and "new" when nothing overlaps
+-- substantially; nil and "ambiguous" plus candidates when two sessions match;
+-- or nil and "partial" plus candidates when a session is touched but not
+-- substantially, which needs a person rather than a guess.
 function M.find(doc, range_start, range_stop)
-  local hits = {}
+  local hits, grazed = {}, {}
   for _, session in ipairs(doc.sessions) do
     local r = session.range
-    if r and overlaps(range_start, range_stop, r.start, r.stop) then
-      hits[#hits + 1] = session
+    if r then
+      local ratio = overlap_ratio(range_start, range_stop, r.start, r.stop)
+      if ratio >= M.MATCH_RATIO then
+        hits[#hits + 1] = session
+      elseif ratio > 0 then
+        grazed[#grazed + 1] = session
+      end
     end
   end
-  if #hits == 0 then return nil, "new" end
   if #hits > 1 then return nil, "ambiguous", hits end
-  return hits[1], "existing"
+  if #hits == 1 then return hits[1], "existing" end
+  if #grazed > 0 then return nil, "partial", grazed end
+  return nil, "new"
 end
 
 -- Records a session, widening its range if the new one reaches further. The

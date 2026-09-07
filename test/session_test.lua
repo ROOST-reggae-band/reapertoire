@@ -193,4 +193,30 @@ function T.upgrading_something_unparseable_returns_it_unchanged()
   h.assert_eq(session.with_offset(nil), nil)
 end
 
+function T.a_selection_barely_touching_a_session_is_not_that_session()
+  -- Rehearsals sit end to end, so a few seconds of overlap is a near miss.
+  -- Filing takes under the neighbouring rehearsal is worse than asking.
+  local doc = doc_with(sess("a", 0, 1000))
+  local found, how, candidates = session.find(doc, 995, 2000)
+  h.assert_eq(found, nil)
+  h.assert_eq(how, "partial")
+  h.assert_eq(#candidates, 1)
+end
+
+function T.a_short_selection_inside_a_session_is_that_session()
+  -- Re-rendering part of a rehearsal must find it, so the ratio is measured
+  -- against the shorter span rather than the session's whole length.
+  local doc = doc_with(sess("a", 0, 3600))
+  local found, how = session.find(doc, 1000, 1100)
+  h.assert_eq(how, "existing")
+  h.assert_eq(found.id, "a")
+end
+
+function T.a_selection_covering_most_of_a_session_is_that_session()
+  local doc = doc_with(sess("a", 100, 200))
+  local found, how = session.find(doc, 0, 300)
+  h.assert_eq(how, "existing")
+  h.assert_eq(found.id, "a")
+end
+
 return T

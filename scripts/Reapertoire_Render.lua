@@ -63,11 +63,29 @@ local sidecar_path = project_dir .. "/" .. session_lib.FILENAME
 local doc = session_lib.decode(adapter.read_file(sidecar_path))
 local found, how, candidates = session_lib.find(doc, sel_start, sel_stop)
 
-if how == "ambiguous" then
+local function describe(list)
   local names = {}
-  for _, s in ipairs(candidates) do names[#names + 1] = s.label or s.id end
-  log("This selection spans %d sessions (%s).", #candidates, table.concat(names, ", "))
+  for _, s in ipairs(list) do
+    names[#names + 1] = string.format("%s (%s)", s.label or s.id,
+      (s.heldAt or "undated"):sub(1, 10))
+  end
+  return table.concat(names, ", ")
+end
+
+if how == "ambiguous" then
+  log("This selection covers %d sessions: %s", #candidates, describe(candidates))
   log("Narrow it to one rehearsal and run again.")
+  return
+end
+
+if how == "partial" then
+  -- Rehearsals sit end to end, so a few seconds of overlap is a near miss
+  -- rather than a match. Filing takes under the neighbouring session silently
+  -- is worse than stopping.
+  log("This selection only clips the edge of: %s", describe(candidates))
+  log("It is not enough overlap to call it the same rehearsal, and not")
+  log("obviously a different one either.")
+  log("Either extend the selection over that session, or move it clear of it.")
   return
 end
 
@@ -197,6 +215,30 @@ end
 local root = config.expand_path(cfg.sessionsRoot)
 local out_dir = session.outputDir or (root .. "/" .. session_lib.folder_name(session))
 session.outputDir = out_dir
+
+-- Always confirm. Rendering writes files, can take minutes, and the session it
+-- files them under is inferred -- so the inference gets shown before anything
+-- happens rather than discovered afterwards.
+local summary = {
+  string.format("%s: %s", how == "new" and "New session" or "Existing session",
+    session.label or session.id),
+  string.format("Date: %s", (session.heldAt or "?"):sub(1, 10)),
+  string.format("Folder: %s", out_dir),
+  "",
+  string.format("%d named take%s will be rendered.", #rows, #rows == 1 and "" or "s"),
+  (cfg.render and cfg.render.stems)
+    and "Master, peaks and per-instrument stems for each."
+    or "Master and peaks for each.",
+}
+if how == "existing" then
+  summary[#summary + 1] = ""
+  summary[#summary + 1] = "Takes already rendered for this session will be replaced."
+end
+
+if reaper.MB(table.concat(summary, "\n"), "Reapertoire - render", 1) ~= 1 then
+  log("Cancelled.")
+  return
+end
 
 log("Rendering %d take%s to %s", #rows, #rows == 1 and "" or "s", out_dir)
 
