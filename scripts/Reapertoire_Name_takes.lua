@@ -291,6 +291,15 @@ local guids_ok = regions.guids_available()
 
 local ctx = ImGui.CreateContext("Reapertoire naming")
 
+-- The arrow keys belong to the take list. ImGui's own keyboard navigation
+-- claims them too, and with both live one press moved two cursors: the take on
+-- the left and, independently, a highlight walking the suggestions on the
+-- right. Nothing here needs nav -- the filter box is focused explicitly and
+-- Enter is handled by hand -- so it goes rather than the take list losing the
+-- arrows.
+ImGui.SetConfigVar(ctx, ENUM.ConfigVar_Flags,
+  ImGui.GetConfigVar(ctx, ENUM.ConfigVar_Flags) & ~ENUM.ConfigFlags_NavEnableKeyboard)
+
 local function frame()
   -- FirstUseEver, so the size is a starting point and not re-imposed every
   -- frame; resizing the window has to stick.
