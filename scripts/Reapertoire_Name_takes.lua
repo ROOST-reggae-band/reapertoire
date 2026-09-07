@@ -458,7 +458,13 @@ local function frame()
           or ImGui.IsKeyPressed(ctx, ENUM.Key_KeypadEnter) then
           -- Enter takes the top match only when it is either typed or
           -- confident. An unconfident guess needs a deliberate click.
-          if hits[1] and (not from_guess or confident) then
+          --
+          -- Testing the query rather than `not from_guess` matters: with an
+          -- empty filter the hit list is the WHOLE repertoire, and a take the
+          -- recogniser never saw carries no guess to make `from_guess` true --
+          -- so the old condition held, and Enter silently named the take
+          -- whatever song happened to sort first.
+          if hits[1] and (query ~= "" or (from_guess and confident)) then
             row.song = hits[1].title
             row.cleared = nil
             row.auto = nil

@@ -82,11 +82,9 @@ but only if that guess is confident, since an unconfident one needs a deliberate
 click. Confident guesses are already filled in by the time you arrive, so there
 `Enter` is a confirmation and clears the `*`.
 
-One sharp edge, described as it currently behaves rather than as intended: with
-the filter empty **and** no guess on the take at all — recognition not run, not
-set up, or it found nothing — the unfiltered song list is what is on screen, and
-`Enter` accepts the first song in it. Type a letter first, or run recognition,
-if you are pressing `Enter` on takes the recogniser never saw.
+On a take the recogniser never saw, with nothing typed, `Enter` does nothing at
+all. There is no top entry to accept -- the list on screen is simply your whole
+repertoire -- so it waits for a letter.
 
 Nothing reaches the project until you press **Apply**, so arrowing around,
 mistyping and renaming cost nothing.
