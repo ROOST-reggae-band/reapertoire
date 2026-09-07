@@ -21,11 +21,10 @@ local config = require("lib.config")
 local songs_lib = require("lib.songs")
 local naming = require("lib.naming")
 local text = require("lib.util.text")
+local time = require("lib.util.time")
 
-local function mmss(t)
-  local m = math.floor(t / 60)
-  return string.format("%d:%05.2f", m, t - m * 60)
-end
+local mmss = time.hms
+
 
 local ImGui
 do

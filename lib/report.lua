@@ -2,13 +2,11 @@
 -- Renders the dry-run report. Written to both the REAPER console and a file so
 -- two threshold settings can be diffed rather than compared by screenshot.
 
+local time = require("lib.util.time")
+
 local M = {}
 
-local function mmss(t)
-  local minutes = math.floor(t / 60)
-  local seconds = t - minutes * 60
-  return string.format("%d:%05.2f", minutes, seconds)
-end
+local mmss = time.hms
 
 function M.render(data)
   local out = {}
@@ -17,9 +15,9 @@ function M.render(data)
   end
 
   line("Reapertoire dry run")
-  line("Selection: %s to %s (%.1f s) at %d Hz",
+  line("Selection: %s to %s (%s) at %d Hz",
     mmss(data.sel_start), mmss(data.sel_stop),
-    data.sel_stop - data.sel_start, data.rate)
+    time.duration(data.sel_stop - data.sel_start), data.rate)
   line("Thresholds: minGapSec=%.1f minTakeSec=%.1f",
     data.opts.minGapSec, data.opts.minTakeSec)
   line("")
@@ -37,14 +35,15 @@ function M.render(data)
   end
   line("")
 
-  line("Timeline: %d covered spans", #data.covered_spans)
+  line("Timeline: %d covered span%s", #data.covered_spans,
+    #data.covered_spans == 1 and "" or "s")
   for i, span in ipairs(data.covered_spans) do
     local n = 0
     for _, take in ipairs(data.takes) do
       if take.span_index == i then n = n + 1 end
     end
-    line("  span %d  %s - %s (%.1f s)  %d take%s%s",
-      i, mmss(span.start), mmss(span.stop), span.stop - span.start,
+    line("  span %d  %s - %s (%s)  %d take%s%s",
+      i, mmss(span.start), mmss(span.stop), time.duration(span.stop - span.start),
       n, n == 1 and "" or "s",
       n > 1 and "  [subdivided]" or "")
   end
@@ -55,8 +54,8 @@ function M.render(data)
   else
     line("Takes")
     for i, take in ipairs(data.takes) do
-      line("  %2d  %s - %s  %5.1f s  span %d  %s",
-        i, mmss(take.start), mmss(take.stop), take.stop - take.start,
+      line("  %2d  %s - %s  %8s  span %d  %s",
+        i, mmss(take.start), mmss(take.stop), time.duration(take.stop - take.start),
         take.span_index, table.concat(take.instruments, ", "))
     end
   end

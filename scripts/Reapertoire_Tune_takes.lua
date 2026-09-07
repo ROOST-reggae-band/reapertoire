@@ -22,6 +22,7 @@ local regions = require("adapters.regions")
 local config = require("lib.config")
 local pipeline = require("lib.pipeline")
 local timeline = require("lib.timeline")
+local time = require("lib.util.time")
 
 -- ReaImGui's binding moved over its lifetime: 0.10 ships a Lua shim inside the
 -- extension and reaches it via ImGui_GetBuiltinPath, 0.9 shipped that shim as a
@@ -78,6 +79,11 @@ if not sel_start then
   reaper.MB("No time selection. Select a range and run again.", "Reapertoire", 0)
   return
 end
+
+-- Positions are shown relative to the selection: a take forty seconds in reads
+-- as 0:40, not as the raw timeline position tens of hours along. Defined here
+-- rather than with the other helpers because it closes over sel_start.
+local function mmss(t) return time.hms(t - sel_start) end
 
 local detection = {}
 for k, v in pairs(cfg.detection) do detection[k] = v end
@@ -173,11 +179,6 @@ end
 
 -- ------------------------------------------------------------------ helpers
 
-local function mmss(t)
-  local rel = t - sel_start
-  local m = math.floor(rel / 60)
-  return string.format("%d:%05.2f", m, rel - m * 60)
-end
 
 local function live_tracks()
   local out = {}

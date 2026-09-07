@@ -10,6 +10,7 @@ local SUITES = {
   "test.pipeline_test",
   "test.fixtures_test",
   "test.text_test",
+  "test.time_test",
   "test.naming_test",
   "test.songs_test",
   "test.session_test",
