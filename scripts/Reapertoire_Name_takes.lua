@@ -149,11 +149,18 @@ local function clear_row(row)
   naming.renumber(view)
 end
 
+-- What the tuner calls a region before anyone names it. Clearing restores this
+-- rather than blanking the region: an unnamed region still needs to be
+-- identifiable in the region manager, and a nameless one is not.
+local function placeholder_name(index)
+  return string.format("Take %d", index)
+end
+
 local function apply_names()
   local written = 0
-  for _, row in ipairs(view) do
+  for i, row in ipairs(view) do
     local name = naming.region_name(row)
-    if row.cleared and not name then name = "" end
+    if row.cleared and not name then name = placeholder_name(i) end
     if name and name ~= row.original then
       if regions.rename(row, name) then
         row.original = name
@@ -227,7 +234,7 @@ local function frame()
         if r.song then
           shown = naming.region_name(r)
         elseif r.cleared then
-          shown = "-- to be cleared --"
+          shown = "-> " .. placeholder_name(i)
         elseif r.original and r.original ~= "" then
           -- A region carrying the tuner's "Take 3" placeholder has a name but
           -- no song. Show it, but never let it read as named.
@@ -259,7 +266,7 @@ local function frame()
         end
       end
       status = string.format(
-        "%d name%s staged for clearing - Apply to write, Reload to discard",
+        "%d name%s staged for reset to Take N - Apply to write, Reload to discard",
         n, n == 1 and "" or "s")
     end
     if row and row.cleared then
