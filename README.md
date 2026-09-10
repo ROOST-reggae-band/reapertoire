@@ -49,7 +49,7 @@ Song recognition needs its own environment:
 
 ## Workflow
 
-1. **Tune takes and create regions.** Make a time selection over a rehearsal.
+1. **Create take regions.** Make a time selection over a rehearsal.
    The panel detects takes, shows them live as you drag the thresholds, and
    writes regions when you are happy.
 2. **Name takes.** Takes the recogniser is confident about arrive already named.
@@ -58,8 +58,18 @@ Song recognition needs its own environment:
    unnamed one.
 3. **Render named takes.** Produces a master, per-instrument stems, and a
    waveform for each of them, plus a manifest.
-4. **Rebuild recognition references.** Feeds the takes you just named back in,
+4. **Rebuild recognition index.** Feeds the takes you just named back in,
    so the next session arrives with suggestions. See below.
+
+Two more sit in the launcher alongside those. **Edit sessions** corrects a
+rehearsal's date, label, kind, venue and notes, and deletes a session record --
+the record only; rendered audio is never touched. **Mark session spans on the
+timeline** writes a pair of markers around each rehearsal, so a project holding
+a year of them shows where one stops and the next begins. Markers rather than
+regions: the region lane already carries one per take.
+
+The four **Debug:** entries are for working on Reapertoire itself, not for
+running a rehearsal.
 
 ### Keyboard
 
@@ -165,7 +175,7 @@ deleted.
 **Run this after every render.** Recognition can only suggest songs it holds
 references for, so the takes you just named do nothing until they are indexed.
 
-From the launcher menu, choose **Rebuild recognition references**. It reports
+From the launcher menu, choose **Rebuild recognition index**. It reports
 what it found:
 
 ```

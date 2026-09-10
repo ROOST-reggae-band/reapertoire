@@ -11,15 +11,17 @@ local repo_dir = script_path:match("^(.*)[/\\]scripts[/\\][^/\\]*$")
 -- No separators: whether gfx.showmenu counts them in the returned index is
 -- version-dependent, and getting it wrong silently launches the wrong tool.
 local ITEMS = {
-  { label = "Tune takes and create regions",     file = "scripts/Reapertoire_Tune_takes.lua" },
+  { label = "Create take regions",               file = "scripts/Reapertoire_Tune_takes.lua" },
   { label = "Name takes",                        file = "scripts/Reapertoire_Name_takes.lua" },
   { label = "Render named takes",                file = "scripts/Reapertoire_Render.lua" },
   { label = "Upload session to the library",     file = "tools/upload_session.lua" },
-  { label = "Rebuild recognition references",    file = "tools/reindex_references.lua" },
-  { label = "Analyse (dry run, writes nothing)", file = "scripts/Reapertoire_Analyze_dryrun.lua" },
-  { label = "Capture tuning fixture",            file = "tools/capture_fixture.lua" },
-  { label = "Show render settings",              file = "tools/probe_render.lua" },
-  { label = "Capture probe format (set WAV first)", file = "tools/capture_probe_format.lua" },
+  { label = "Rebuild recognition index",         file = "tools/reindex_references.lua" },
+  { label = "Edit sessions",                     file = "scripts/Reapertoire_Edit_sessions.lua" },
+  { label = "Mark session spans on the timeline", file = "tools/mark_session_spans.lua" },
+  { label = "Debug: analyse without writing anything", file = "scripts/Reapertoire_Analyze_dryrun.lua" },
+  { label = "Debug: capture tuning fixture",     file = "tools/capture_fixture.lua" },
+  { label = "Debug: show render settings",       file = "tools/probe_render.lua" },
+  { label = "Debug: capture probe format",       file = "tools/capture_probe_format.lua" },
 }
 
 local labels = {}

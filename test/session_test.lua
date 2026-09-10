@@ -219,4 +219,152 @@ function T.a_selection_covering_most_of_a_session_is_that_session()
   h.assert_eq(found.id, "a")
 end
 
+-- Timeline markers
+
+local function sess(over)
+  local base = { id = "a", label = "Choltice", heldAt = "2025-09-27T19:30:00+02:00",
+                 range = { start = 100.5, stop = 400.25 },
+                 takes = { {}, {}, {} } }
+  for k, v in pairs(over or {}) do base[k] = v end
+  return base
+end
+
+function T.a_session_becomes_a_marker_at_each_end()
+  local m = session.span_markers(sess())
+  h.assert_eq(#m, 2)
+  h.assert_near(m[1].at, 100.5, 1e-9)
+  h.assert_near(m[2].at, 400.25, 1e-9)
+end
+
+function T.the_opening_marker_names_the_rehearsal_and_counts_its_takes()
+  local m = session.span_markers(sess())
+  h.assert_eq(m[1].name, "\u{25B6} 2025-09-27 Choltice - 3 takes")
+end
+
+function T.the_closing_marker_is_terse_because_it_repeats_nothing()
+  h.assert_eq(session.span_markers(sess())[2].name, "\u{25C0} Choltice ends")
+end
+
+function T.one_take_is_not_called_takes()
+  local m = session.span_markers(sess({ takes = { {} } }))
+  h.assert_eq(m[1].name, "\u{25B6} 2025-09-27 Choltice - 1 take")
+end
+
+function T.a_session_with_no_takes_says_so_rather_than_zero()
+  local m = session.span_markers(sess({ takes = {} }))
+  h.assert_eq(m[1].name, "\u{25B6} 2025-09-27 Choltice - not rendered")
+end
+
+function T.an_unlabelled_session_falls_back_to_the_date()
+  -- Built rather than overridden: `pairs` never yields a nil, so passing
+  -- `label = nil` to the helper would silently keep the label.
+  local unlabelled = sess()
+  unlabelled.label = nil
+  local m = session.span_markers(unlabelled)
+  h.assert_eq(m[1].name, "\u{25B6} 2025-09-27 rehearsal - 3 takes")
+  h.assert_eq(m[2].name, "\u{25C0} rehearsal ends")
+end
+
+function T.a_session_with_no_range_yields_no_markers()
+  -- Nothing to point at; better than two markers at zero.
+  local no_range = sess()
+  no_range.range = nil
+  h.assert_eq(#session.span_markers(no_range), 0)
+  h.assert_eq(#session.span_markers(sess({ range = { start = 1 } })), 0)
+end
+
+-- Editing a session's metadata
+
+local function editable()
+  return { id = "a", kind = "rehearsal", label = "session",
+           heldAt = "2025-09-27T19:30:00+02:00",
+           range = { start = 100, stop = 400 }, takes = { {}, {} } }
+end
+
+function T.editing_writes_the_fields_through()
+  local sess = editable()
+  local problems = session.update(sess, {
+    label = "Choltice", kind = "concert", venue = "Sokolovna", notes = "new tune" })
+  h.assert_eq(#problems, 0)
+  h.assert_eq(sess.label, "Choltice")
+  h.assert_eq(sess.kind, "concert")
+  h.assert_eq(sess.venue, "Sokolovna")
+  h.assert_eq(sess.notes, "new tune")
+end
+
+function T.changing_the_date_keeps_the_time_of_day_and_the_offset()
+  -- The contract rejects a timestamp with no offset, and rebuilding the string
+  -- from the date alone would throw away the hour the rehearsal started.
+  local sess = editable()
+  session.update(sess, { date = "2025-10-01" })
+  h.assert_eq(sess.heldAt:sub(1, 10), "2025-10-01")
+  h.assert_eq(sess.heldAt:match("19:30") ~= nil, true, "kept the time")
+  h.assert_eq(session.has_offset(sess.heldAt), true)
+end
+
+function T.a_malformed_date_is_refused_and_changes_nothing()
+  local sess = editable()
+  local problems = session.update(sess, { date = "27/09/2025", label = "Choltice" })
+  h.assert_eq(#problems, 1)
+  h.assert_eq(sess.heldAt, "2025-09-27T19:30:00+02:00", "left alone")
+  h.assert_eq(sess.label, "session", "nothing applied when anything is wrong")
+end
+
+function T.an_unknown_kind_is_refused()
+  -- The server takes exactly three, and a typo would only surface as a 422
+  -- part-way through an upload.
+  local problems = session.update(editable(), { kind = "jam" })
+  h.assert_eq(#problems, 1)
+  h.assert_eq(problems[1]:match("rehearsal") ~= nil, true, "names the valid ones")
+end
+
+function T.a_blank_venue_or_note_is_absent_not_empty()
+  -- Nullable but min-length-1 server-side: "" is a 422, absent is fine.
+  local sess = editable()
+  sess.venue, sess.notes = "Sokolovna", "something"
+  session.update(sess, { venue = "", notes = "   " })
+  h.assert_eq(sess.venue, nil)
+  h.assert_eq(sess.notes, nil)
+end
+
+function T.a_blank_label_is_refused_because_a_session_needs_a_name()
+  local problems = session.update(editable(), { label = "  " })
+  h.assert_eq(#problems, 1)
+end
+
+function T.fields_not_given_are_left_alone()
+  local sess = editable()
+  sess.venue = "Sokolovna"
+  session.update(sess, { label = "Choltice" })
+  h.assert_eq(sess.venue, "Sokolovna")
+  h.assert_eq(sess.kind, "rehearsal")
+end
+
+function T.removing_a_session_takes_only_that_one()
+  local doc = { schema = 1, sessions = {
+    { id = "a", range = { start = 0, stop = 10 } },
+    { id = "b", range = { start = 20, stop = 30 } },
+  } }
+  h.assert_eq(session.remove(doc, "a"), true)
+  h.assert_eq(#doc.sessions, 1)
+  h.assert_eq(doc.sessions[1].id, "b")
+end
+
+function T.removing_an_unknown_session_reports_it_rather_than_guessing()
+  local doc = { schema = 1, sessions = { { id = "a", range = { start = 0, stop = 10 } } } }
+  h.assert_eq(session.remove(doc, "zzz"), false)
+  h.assert_eq(#doc.sessions, 1)
+end
+
+function T.a_re_render_no_longer_wipes_the_venue_and_notes()
+  -- upsert carried forward only label/kind/heldAt/outputDir, so anything typed
+  -- into the editor vanished on the next render.
+  local doc = { schema = 1, sessions = {} }
+  session.upsert(doc, { id = "a", range = { start = 0, stop = 100 },
+                        label = "Choltice", venue = "Sokolovna", notes = "new tune" })
+  session.upsert(doc, { id = "a", range = { start = 0, stop = 100 }, label = "Choltice" })
+  h.assert_eq(doc.sessions[1].venue, "Sokolovna")
+  h.assert_eq(doc.sessions[1].notes, "new tune")
+end
+
 return T

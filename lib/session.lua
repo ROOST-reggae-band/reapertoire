@@ -96,10 +96,93 @@ function M.upsert(doc, session)
   end
   existing.range.start = math.min(existing.range.start, session.range.start)
   existing.range.stop = math.max(existing.range.stop, session.range.stop)
-  for _, key in ipairs({ "label", "kind", "heldAt", "outputDir" }) do
+  -- Venue and notes included: they exist only because somebody typed them,
+  -- and leaving them out meant the next render silently threw them away.
+  for _, key in ipairs({ "label", "kind", "heldAt", "outputDir", "venue", "notes" }) do
     if session[key] ~= nil then existing[key] = session[key] end
   end
   return existing, false
+end
+
+M.KINDS = { "rehearsal", "concert", "session" }
+
+local function is_kind(value)
+  for _, kind in ipairs(M.KINDS) do
+    if value == kind then return true end
+  end
+  return false
+end
+
+local function trimmed(value)
+  return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- Applies edited metadata to a session, returning a list of problems.
+--
+-- All or nothing: a bad date leaves the label alone too. Half-applying an edit
+-- is worse than refusing it, because the panel would then show some fields
+-- saved and some not with no way to tell which.
+--
+-- Only the keys present in `fields` are touched, so the panel can send what it
+-- has without spelling out the rest.
+function M.update(session, fields)
+  local problems = {}
+  local date, held
+
+  if fields.date ~= nil then
+    date = trimmed(fields.date)
+    if not date:match("^%d%d%d%d%-%d%d%-%d%d$") then
+      problems[#problems + 1] =
+        string.format("the date %q is not YYYY-MM-DD", tostring(fields.date))
+    else
+      -- Rebuilt from the date plus the time already stored, so editing the day
+      -- does not silently move the rehearsal to midnight -- and put back
+      -- through `with_offset`, because the ingest contract rejects a timestamp
+      -- carrying no UTC offset.
+      local time_of_day = (session.heldAt or ""):match("T(%d%d:%d%d)") or "00:00"
+      held = M.with_offset(M.iso8601(date, time_of_day))
+    end
+  end
+
+  if fields.kind ~= nil and not is_kind(trimmed(fields.kind)) then
+    problems[#problems + 1] = string.format("the kind %q is none of %s",
+      tostring(fields.kind), table.concat(M.KINDS, ", "))
+  end
+
+  if fields.label ~= nil and trimmed(fields.label) == "" then
+    problems[#problems + 1] = "a session needs a label -- it names its output folder"
+  end
+
+  if #problems > 0 then return problems end
+
+  if held then session.heldAt = held end
+  if fields.kind ~= nil then session.kind = trimmed(fields.kind) end
+  if fields.label ~= nil then session.label = trimmed(fields.label) end
+  -- Blank means absent, not empty: both are nullable server-side but
+  -- min-length-1 where present, so "" is rejected and nil is not.
+  for _, key in ipairs({ "venue", "notes" }) do
+    if fields[key] ~= nil then
+      local value = trimmed(fields[key])
+      session[key] = value ~= "" and value or nil
+    end
+  end
+
+  return problems
+end
+
+-- Drops a session record. Returns whether one went.
+--
+-- The record only: the rendered audio and its manifest are left exactly where
+-- they are, because deleting a row in a sidecar should never cost anybody a
+-- rehearsal.
+function M.remove(doc, id)
+  for index, session in ipairs(doc.sessions or {}) do
+    if session.id == id then
+      table.remove(doc.sessions, index)
+      return true
+    end
+  end
+  return false
 end
 
 -- Folder name for a session: the date it was held plus its label, so the
@@ -109,6 +192,41 @@ function M.folder_name(session)
   local slug = text.slug(session.label or "session")
   if slug == "" then slug = "session" end
   return date .. "-" .. slug
+end
+
+-- The two markers that delimit a session on the timeline.
+--
+-- Markers, not regions: the region lane already carries one per take, and a
+-- second kind of region interleaved with those makes the lane unreadable.
+-- Markers live in their own lane, REAPER draws them as gridlines down the
+-- arrange view, and nothing that reads regions or media items can mistake one
+-- for a take.
+--
+-- Two of them rather than one, because rehearsals are not contiguous -- two on
+-- the same evening can sit minutes apart -- so a single marker per session
+-- would leave the gap between them looking like part of the previous one.
+function M.span_markers(session)
+  local range = session.range or {}
+  if not range.start or not range.stop then return {} end
+
+  local date = (session.heldAt or ""):match("^(%d%d%d%d%-%d%d%-%d%d)") or "undated"
+  local label = session.label
+  if not label or label == "" then label = "rehearsal" end
+
+  local count = #(session.takes or {})
+  local takes
+  if count == 0 then
+    -- Distinguishes a rehearsal nobody has rendered from one that rendered
+    -- nothing, which "0 takes" would not.
+    takes = "not rendered"
+  else
+    takes = string.format("%d take%s", count, count == 1 and "" or "s")
+  end
+
+  return {
+    { at = range.start, name = string.format("\u{25B6} %s %s - %s", date, label, takes) },
+    { at = range.stop, name = string.format("\u{25C0} %s ends", label) },
+  }
 end
 
 -- Merges freshly rendered takes into a session, matched on the region GUID so
