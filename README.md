@@ -56,8 +56,8 @@ Song recognition needs its own environment:
    For the rest: arrow between takes — each seeks and plays — type one or two
    letters to filter your songs, press Enter to accept and jump to the next
    unnamed one.
-3. **Render named takes.** Produces a master, waveform peaks and per-instrument
-   stems for each take, plus a manifest.
+3. **Render named takes.** Produces a master, per-instrument stems, and a
+   waveform for each of them, plus a manifest.
 4. **Rebuild recognition references.** Feeds the takes you just named back in,
    so the next session arrives with suggestions. See below.
 
@@ -122,6 +122,15 @@ spans, padded outward and clamped to item edges.
 **Per-take instruments.** Which live tracks actually carry signal inside each
 take, computed per take rather than per session — players arrive late and sit
 tunes out.
+
+**Programmed parts.** A track whose sound comes out of a plugin fed by MIDI has
+no audio to read at the item level, so every frame of it is absent and level
+thresholds have nothing to work on. Such a track is judged by whether it holds
+items at all — nobody writes MIDI into a track by accident — and is present in
+whichever takes its items cover. No stand-in level is invented for it: the
+frame arrays stay honest, so it contributes nothing to gap detection, and a
+drum machine left running through a break cannot glue two takes into one. It
+gets no waveform either, since a flat one reads as silence.
 
 Every threshold is configurable and all of them are approximate. The tuning
 panel exists because the right values depend on the room, the interface and the
@@ -380,17 +389,37 @@ manifests.
 ingest API. It needs no DAW: the manifest a render produced already holds every
 fact the API asks for.
 
+The server URL and the token live in the `ingest` block of
+`config/settings.json`, which is gitignored, so neither is retyped per run:
+
+```json
+"ingest": {
+  "api": "https://example/api/ingest/v1",
+  "token": "bpk_..."
+}
+```
+
 ```sh
-export REAPERTOIRE_TOKEN=blk_...
 .venv/bin/python tools/ingest/upload.py \
-  --manifest ~/Music/RehearsalSessions/2026-05-28-practice/manifest.json \
-  --api https://example/api/ingest/v1
+  --manifest ~/Music/RehearsalSessions/2026-05-28-practice/manifest.json
 ```
 
 `--dry-run` checks the manifest and the files on disk and contacts nothing.
-`--no-publish` leaves takes unpublished for review.
+`--no-publish` leaves takes unpublished for review. `--config` points at a
+different settings file.
 
-The token is read from the environment and never written anywhere.
+`REAPERTOIRE_TOKEN` overrides the stored token and `--api` overrides the stored
+URL -- what a CI run, or a one-off push at somebody else's server, wants. Since
+the settings file now holds a secret, it should be readable only by you; the
+uploader says so if it is not.
+
+```sh
+chmod 600 config/settings.json
+```
+
+Issue the token in the bandlib admin UI at `/admin/tokens` with the
+`ingest:write` scope, and nothing else -- it is the only scope any ingest route
+checks, so a token that leaks off a laptop cannot read votes or touch members.
 
 **Everything is idempotent.** The session UUID and the region GUIDs are the
 client references, so re-posting either returns the existing row rather than
@@ -425,9 +454,31 @@ against a mock implementing the contract. `./bin/test` runs that suite too.
 | What | Where |
 |---|---|
 | Rendered takes and manifests | `<sessionsRoot>/<date>-<label>/` |
+| One take's audio | `.../<n>-<song>-<label>-<guid8>/`, `stems/` beneath it |
 | Reference library | `<sessionsRoot>/.reapertoire-references.json` |
 | Which rehearsals a project holds | `.session-metadata.json`, beside the `.rpp` |
 | Your configuration | `config/settings.json`, gitignored |
+
+A take's folder ends in the first eight characters of its region GUID because
+position is not identity. Without it, rendering a different time selection
+makes a different region "take 1" at index 1, which lands on a folder another
+take already owns and overwrites its audio -- silently, since the manifest keys
+takes by GUID and simply ends up with two of them pointing at one folder.
+
+A manifest entry whose region no longer exists in the project is dropped on
+the next render, and its folder goes with it. Keeping an entry only ever meant
+"not rendered this time", which is indistinguishable from "the region is gone"
+without knowing what the project still holds -- so a take deleted and re-cut in
+REAPER used to leave its old entry behind for good, pointing at audio that now
+belonged to whatever replaced it, and refusing to upload ever after.
+
+Rendering a take **clears its folder first** rather than overwriting file by
+file: REAPER asks before replacing each file it renders, which is a hundred
+dialogs on a session with stems, and a single "no" leaves the folder mixing two
+renders. Folders no take in the manifest points at any more are removed once
+the manifest is safely written -- judged against the whole manifest, never
+against one render, so rendering two takes of a twelve-take session leaves the
+other ten exactly where they are.
 
 One REAPER project commonly holds many rehearsals appended along the timeline,
 so a session is identified by the time range it occupies. Re-running over the

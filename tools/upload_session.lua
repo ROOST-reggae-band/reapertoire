@@ -58,19 +58,65 @@ if not adapter.read_file(manifest) then
   return
 end
 
--- The token lives in the environment and is never read, logged or stored here.
--- REAPER does not inherit a login shell, so the command is run through one.
+-- Single-quoted, the only quoting /bin/sh guarantees: everything inside is
+-- literal, and an embedded quote is closed, escaped and reopened. Lua's %q is
+-- Lua's escaping, not the shell's, and differs on exactly the characters a
+-- path is most likely to contain.
+local function shell_quote(value)
+  return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
+end
+
+-- Output goes to a file the poller tails rather than down a pipe. `read("*a")`
+-- on a pipe waits for the process to EXIT, and REAPER is single-threaded, so
+-- the whole DAW froze for the length of the upload -- minutes on a session of
+-- a few hundred megabytes -- and every line of output arrived at once, after
+-- it no longer told anyone anything.
+local log_path = session.outputDir .. "/.upload.log"
+os.remove(log_path)
+
+-- `-u` matters: Python buffers stdout in blocks when it is not a terminal, so
+-- without it the file fills 8KB at a time and the progress lines arrive in
+-- lumps long after the files they describe.
+local DONE = "__reapertoire_done "
 local command = string.format(
-  [[/bin/sh -lc %q]],
-  string.format('%q %q --manifest %q --api %q 2>&1',
-    repo_dir .. "/.venv/bin/python", repo_dir .. "/tools/ingest/upload.py",
-    manifest, api))
+  "%s -u %s --manifest %s --api %s >%s 2>&1; echo %s$? >>%s",
+  shell_quote(repo_dir .. "/.venv/bin/python"),
+  shell_quote(repo_dir .. "/tools/ingest/upload.py"),
+  shell_quote(manifest), shell_quote(api),
+  shell_quote(log_path), shell_quote(DONE), shell_quote(log_path))
+
+-- REAPER does not inherit a login shell, so this runs through one; `&` detaches
+-- it so os.execute returns straight away and the UI stays alive.
+os.execute(string.format("/bin/sh -lc %s &", shell_quote(command)))
 
 log("Uploading %s", manifest)
-local pipe = io.popen(command)
-if not pipe then
-  log("Could not run the uploader.")
-  return
+log("REAPER stays usable -- this window fills in as files go up.")
+
+-- Tails the log, printing only what is new. Deferred rather than looped: a
+-- loop here would block the UI exactly as `read("*a")` did.
+local shown = 0
+local function poll()
+  local handle = io.open(log_path, "r")
+  if handle then
+    handle:seek("set", shown)
+    local fresh = handle:read("*a") or ""
+    handle:close()
+    if #fresh > 0 then
+      shown = shown + #fresh
+      local finished = fresh:match(DONE .. "(%d+)")
+      if finished then
+        fresh = fresh:gsub(DONE .. "%d+%s*", "")
+      end
+      if #fresh > 0 then reaper.ShowConsoleMsg(fresh) end
+      if finished then
+        log("\n%s", finished == "0" and "Upload finished."
+          or string.format("Upload failed (exit %s). The log is at %s",
+            finished, log_path))
+        return
+      end
+    end
+  end
+  reaper.defer(poll)
 end
-log("%s", pipe:read("*a"))
-pipe:close()
+
+poll()
