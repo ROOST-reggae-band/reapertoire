@@ -14,6 +14,7 @@ package.path = repo_dir .. "/?.lua;" .. repo_dir .. "/?/init.lua;" .. package.pa
 local adapter = require("adapters.reaper_api")
 local config = require("lib.config")
 local recognise = require("adapters.recognise")
+local background = require("adapters.background")
 
 local function log(fmt, ...)
   reaper.ShowConsoleMsg(string.format(fmt .. "\n", ...))
@@ -35,29 +36,48 @@ end
 local root = config.expand_path(cfg.sessionsRoot)
 local references = root .. "/" .. recognise.REFERENCES
 
+-- Detached, because indexing reads every rendered take in the archive: run
+-- down a pipe it freezes REAPER until it finishes.
+local log_path = root .. "/.reindex.log"
+local collected = {}
+
 log("Reading every named take under %s ...", root)
-local summary, err = recognise.index(repo_dir, root, references)
-if not summary then
-  log("Failed: %s", tostring(err))
-  return
-end
+log("REAPER stays usable -- this window fills in as it goes.")
 
-log("")
-local total = summary.total or 0
-if total == 0 then
-  log("No named takes have been rendered yet, so there is nothing to index.")
-  log("Name some takes and render them first.")
-  return
-end
+background.run(
+  recognise.index_command(repo_dir, root, references), log_path,
+  function(text)
+    collected[#collected + 1] = text
+    reaper.ShowConsoleMsg(text)
+  end,
+  function(ok, code)
+    if not ok then
+      log("\nFailed (exit %d). The log is at %s", code, log_path)
+      return
+    end
 
-local songs = {}
-for title, count in pairs(summary.songs or {}) do
-  songs[#songs + 1] = string.format("%s (%d)", title, count)
-end
-table.sort(songs)
+    local summary, err = recognise.parse_index_summary(table.concat(collected))
+    if not summary then
+      log("\nFailed: %s", tostring(err))
+      return
+    end
 
-log("Indexed %d take%s across %d song%s:",
-  total, total == 1 and "" or "s", #songs, #songs == 1 and "" or "s")
-for _, line in ipairs(songs) do log("  %s", line) end
-log("")
-log("Written to %s", references)
+    log("")
+    local total = summary.total or 0
+    if total == 0 then
+      log("No named takes have been rendered yet, so there is nothing to index.")
+      log("Name some takes and render them first.")
+      return
+    end
+
+    local songs = {}
+    for title, count in pairs(summary.songs or {}) do
+      songs[#songs + 1] = string.format("%s (%d)", title, count)
+    end
+    table.sort(songs)
+
+    log("Indexed %d take%s across %d song%s:",
+      total, total == 1 and "" or "s", #songs, #songs == 1 and "" or "s")
+    for _, line in ipairs(songs) do log("  %s", line) end
+    log("\nWritten to %s", references)
+  end)

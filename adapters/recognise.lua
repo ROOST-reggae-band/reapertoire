@@ -6,6 +6,7 @@
 -- the DAW down with it. The two talk JSON over temporary files.
 
 local json = require("lib.util.json")
+local background = require("adapters.background")
 
 local M = {}
 
@@ -133,13 +134,24 @@ end
 
 -- Rebuilds the reference library from every named take already rendered.
 -- Returns a short summary line, or nil and a reason.
-function M.index(repo_dir, sessions_root, references_path)
-  local out = run(string.format(
-    "%q %q index --sessions-root %q --out %q",
-    python(repo_dir), repo_dir .. "/tools/recognise/recognise.py",
-    sessions_root, references_path))
+-- The command that rebuilds the reference library, for a caller to run.
+--
+-- Handed back rather than run here because indexing reads every rendered take
+-- in the archive and takes minutes: run down a pipe it freezes REAPER for the
+-- duration. `adapters/background` runs it detached; `-u` keeps Python from
+-- buffering its progress lines into one lump at the end.
+function M.index_command(repo_dir, sessions_root, references_path)
+  local q = background.quote
+  return string.format("%s -u %s index --sessions-root %s --out %s",
+    q(python(repo_dir)), q(repo_dir .. "/tools/recognise/recognise.py"),
+    q(sessions_root), q(references_path))
+end
+
+-- The JSON summary the indexer prints last, out of the whole output.
+--
+-- Last line, as in match: the tool reports progress before its summary.
+function M.parse_index_summary(out)
   if not out or out == "" then return nil, "the recogniser produced no output" end
-  -- Last line, as in match: the tool reports progress before its JSON summary.
   local last = out:match("[^\r\n]+%s*$") or out
   local parsed = json.decode(last)
   if type(parsed) ~= "table" then
