@@ -219,4 +219,62 @@ function T.a_dropped_takes_folder_then_reads_as_orphaned()
   h.assert_eq(orphans[1], "/out/ghost")
 end
 
+-- Refreshing the event block from the session record
+
+local function a_session(over)
+  local base = { id = "sid", kind = "concert", heldAt = "2025-07-30T19:52:00+02:00",
+                 label = "Nota", venue = "Nota", notes = "support slot",
+                 range = { start = 100, stop = 400 } }
+  for k, v in pairs(over or {}) do base[k] = v end
+  return base
+end
+
+function T.the_event_block_is_rewritten_from_the_session()
+  -- The sidecar owns what a rehearsal IS; the manifest carries a copy so it
+  -- stays self-contained, and the copy is refreshed rather than re-rendered.
+  local m = { event = { clientRef = "sid", kind = "rehearsal", label = "session" },
+              takes = { { clientRef = "g1" } } }
+  h.assert_eq(manifest.refresh_event(m, a_session()), true)
+  h.assert_eq(m.event.kind, "concert")
+  h.assert_eq(m.event.label, "Nota")
+  h.assert_eq(m.event.venue, "Nota")
+  h.assert_eq(m.event.notes, "support slot")
+end
+
+function T.refreshing_leaves_the_takes_alone()
+  -- The manifest owns take data. Refreshing the event must not touch it.
+  local m = { event = { clientRef = "sid" }, takes = { { clientRef = "g1" }, { clientRef = "g2" } } }
+  manifest.refresh_event(m, a_session())
+  h.assert_eq(#m.takes, 2)
+end
+
+function T.a_field_cleared_in_the_editor_is_cleared_in_the_manifest()
+  -- Not merged: a venue removed must not survive in the copy.
+  local m = { event = { clientRef = "sid", venue = "Sokolovna", notes = "old" }, takes = {} }
+  local session = a_session()
+  session.venue, session.notes = nil, nil
+  manifest.refresh_event(m, session)
+  h.assert_eq(m.event.venue, nil)
+  h.assert_eq(m.event.notes, nil)
+end
+
+function T.a_manifest_for_a_different_session_is_refused()
+  -- clientRef is identity: rewriting the event block of somebody else's
+  -- manifest would relabel a whole rehearsal.
+  local m = { event = { clientRef = "other" }, takes = {} }
+  h.assert_eq(manifest.refresh_event(m, a_session()), false)
+  h.assert_eq(m.event.clientRef, "other")
+end
+
+function T.a_manifest_with_no_event_is_refused_rather_than_invented()
+  h.assert_eq(manifest.refresh_event({ takes = {} }, a_session()), false)
+  h.assert_eq(manifest.refresh_event(nil, a_session()), false)
+end
+
+function T.the_range_start_travels_because_take_times_are_relative_to_it()
+  local m = { event = { clientRef = "sid" }, takes = {} }
+  manifest.refresh_event(m, a_session())
+  h.assert_near(m.event.rangeStart, 100, 1e-9)
+end
+
 return T

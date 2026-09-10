@@ -92,7 +92,8 @@ class FakeIngest(BaseHTTPRequestHandler):
             self.state["events"].append(body)
             first = body["clientRef"] not in self.state["known_events"]
             self.state["known_events"].add(body["clientRef"])
-            self._send(200, {"eventId": "evt_1", "created": first})
+            self._send(200, {"eventId": "evt_1", "created": first,
+                             "updated": bool(self.state.get("event_updated"))})
 
         elif self.path.endswith("/takes"):
             self.state["takes"].append(body)
@@ -140,7 +141,7 @@ def fresh_state():
         "events": [], "takes": [], "commits": [], "puts": [],
         "known_events": set(), "expired_urls": set(),
         "uploads": [], "uploads_after_refresh": [], "refreshes": 0,
-        "fail_takes_with": None, "always_expired": False,
+        "fail_takes_with": None, "always_expired": False, "event_updated": False,
         "agents": [], "put_content_types": [],
     }
 
@@ -748,6 +749,32 @@ class TestFilesChangingUnderTheRun(ServerCase):
         self.assertIn("vanished while the session was uploading", message)
         self.assertIn("skipped rather than sent twice", message)
         self.assertNotIn("Traceback", message)
+
+
+class TestMetadataCorrection(ServerCase):
+    def test_a_plain_run_asks_for_no_correction(self):
+        # A re-run over an old session must not revert something a person
+        # fixed in the library.
+        self.state["uploads"] = [self.upload_slot(status="ready")]
+        upload_session(self.write_manifest(), self.client, log=lambda *_: None)
+        self.assertIs(self.state["events"][0]["updateMetadata"], False)
+
+    def test_the_flag_travels_when_asked(self):
+        self.state["uploads"] = [self.upload_slot(status="ready")]
+        upload_session(self.write_manifest(), self.client, log=lambda *_: None,
+                       update_metadata=True)
+        self.assertIs(self.state["events"][0]["updateMetadata"], True)
+
+    def test_the_log_says_when_the_library_took_the_correction(self):
+        # Only meaningful for an event the server already has -- a correction
+        # to something just created would be nothing to report.
+        self.state["uploads"] = [self.upload_slot(status="ready")]
+        self.state["known_events"].add("sess-1")
+        self.state["event_updated"] = True
+        lines = []
+        upload_session(self.write_manifest(), self.client, log=lines.append,
+                       update_metadata=True)
+        self.assertTrue(any("metadata updated" in line for line in lines), lines)
 
 
 class TestDryRun(ServerCase):

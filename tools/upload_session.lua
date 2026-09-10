@@ -12,6 +12,8 @@ package.path = repo_dir .. "/?.lua;" .. repo_dir .. "/?/init.lua;" .. package.pa
 local adapter = require("adapters.reaper_api")
 local config = require("lib.config")
 local session_lib = require("lib.session")
+local manifest_lib = require("lib.manifest")
+local json = require("lib.util.json")
 local background = require("adapters.background")
 
 local function log(fmt, ...)
@@ -54,9 +56,58 @@ if how ~= "existing" or not session.outputDir then
 end
 
 local manifest = session.outputDir .. "/manifest.json"
-if not adapter.read_file(manifest) then
+local manifest_raw = adapter.read_file(manifest)
+if not manifest_raw then
   log("No manifest at %s -- render this session first.", manifest)
   return
+end
+
+-- The sidecar owns what a rehearsal IS -- its kind, date, label, venue, notes
+-- -- and the manifest carries a copy so it stays self-contained for a push
+-- from anywhere. Refreshed here, at the one moment the copy has to be true,
+-- because the alternative was a full re-render: hours of re-encoding audio
+-- that had not changed, to correct a venue.
+local metadata_changed = false
+do
+  local parsed = json.decode(manifest_raw)
+  if manifest_lib.refresh_event(parsed, session) then
+    local encoded = json.encode(parsed, { indent = true })
+    if encoded ~= manifest_raw then
+      local tmp = manifest .. ".tmp"
+      local handle = io.open(tmp, "w")
+      if handle then
+        handle:write(encoded)
+        handle:close()
+        -- Renamed over the original: a crash midway leaves the manifest
+        -- intact rather than half a file, with the audio still on disk and
+        -- nothing describing it.
+        os.rename(tmp, manifest)
+        metadata_changed = true
+        log("Refreshed the manifest from the session record.")
+      else
+        log("Could not update %s -- uploading it as it stands.", manifest)
+      end
+    end
+  else
+    log("The manifest belongs to a different session; uploading it as it stands.")
+  end
+end
+
+-- Asked only when the local record actually differs from what was last sent,
+-- which is the only moment the question means anything. The library ignores a
+-- re-post's metadata unless told otherwise, precisely so a routine re-run
+-- cannot revert a correction somebody made there -- so overwriting has to be
+-- somebody saying yes, not a default.
+local update_metadata = false
+if metadata_changed then
+  local answer = reaper.MB(
+    "This rehearsal's details have changed since it was last uploaded.\n\n" ..
+    "Overwrite the library's copy with the local record?\n" ..
+    "(kind, title, date, venue and notes -- takes and audio are unaffected)\n\n" ..
+    "No uploads the audio without touching them.",
+    "Reapertoire - overwrite metadata?", 3)
+  if answer == 2 then return end       -- cancel
+  update_metadata = answer == 6        -- yes
 end
 
 -- Output goes to a file the poller tails rather than down a pipe -- see
@@ -66,10 +117,11 @@ end
 -- without it the file fills 8KB at a time and the progress lines arrive in
 -- lumps long after the files they describe.
 local log_path = session.outputDir .. "/.upload.log"
-local command = string.format("%s -u %s --manifest %s --api %s",
+local command = string.format("%s -u %s --manifest %s --api %s%s",
   background.quote(repo_dir .. "/.venv/bin/python"),
   background.quote(repo_dir .. "/tools/ingest/upload.py"),
-  background.quote(manifest), background.quote(api))
+  background.quote(manifest), background.quote(api),
+  update_metadata and " --update-metadata" or "")
 
 log("Uploading %s", manifest)
 log("REAPER stays usable -- this window fills in as files go up.")

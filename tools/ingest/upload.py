@@ -531,7 +531,7 @@ def build_take_payload(event, take):
 
 
 def upload_session(manifest_path, client, publish=True, dry_run=False, log=print,
-                   progress_mode="auto"):
+                   progress_mode="auto", update_metadata=False):
     manifest = json.loads(Path(manifest_path).read_text())
     base_dir = Path(manifest_path).parent
     event = manifest["event"]
@@ -597,6 +597,11 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
     result = client.declare_event(
         {
             "clientRef": event["clientRef"],
+            # Off unless asked: a re-post is a lookup, and a run over an old
+            # session must not quietly revert something corrected in the
+            # library. On, the whole record applies -- a field cleared here is
+            # cleared there.
+            "updateMetadata": update_metadata,
             "kind": event.get("kind", "rehearsal"),
             "heldAt": event.get("heldAt"),
             "venue": event.get("venue"),
@@ -607,7 +612,13 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
             "notes": event.get("notes"),
         }
     )
-    log(f"Event {'created' if result.get('created') else 'already known'}: {result.get('eventId')}")
+    if result.get("created"):
+        state = "created"
+    elif result.get("updated"):
+        state = "already known, metadata updated"
+    else:
+        state = "already known"
+    log(f"Event {state}: {result.get('eventId')}")
 
     # Sized from what the server has not got yet is impossible to know before
     # declaring, so the bar is sized from the whole session and skipped assets
@@ -735,6 +746,10 @@ def main():
                         help="leave takes unpublished for review")
     parser.add_argument("--dry-run", action="store_true",
                         help="check the manifest and files, contact nothing")
+    parser.add_argument("--update-metadata", action="store_true",
+                        help="correct the library's kind, title, date, venue and notes "
+                             "for this session from the manifest, rather than leaving "
+                             "whatever was sent first")
     parser.add_argument("--progress", choices=("auto", "always", "never"), default="auto",
                         help="the upload bar: auto draws it only to a terminal, "
                              "always forces it on where one is not detected")
@@ -765,7 +780,7 @@ def main():
         summary = upload_session(
             args.manifest, Client(api, token),
             publish=not args.no_publish, dry_run=args.dry_run,
-            progress_mode=args.progress,
+            progress_mode=args.progress, update_metadata=args.update_metadata,
         )
     except IngestError as error:
         print(str(error), file=sys.stderr)

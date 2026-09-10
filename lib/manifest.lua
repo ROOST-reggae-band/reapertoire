@@ -21,22 +21,53 @@ local function duration_ms(from, to)
   return math.floor((to - from) * 1000 + 0.5)
 end
 
+-- The event block: what the rehearsal IS, copied from the session record.
+--
+-- The sidecar owns these; the manifest carries a copy so it stays
+-- self-contained -- `upload.py` needs no DAW, which is what lets a session be
+-- pushed from anywhere. A copy is fine; a copy nothing can refresh is not,
+-- which is why `refresh_event` exists beside it.
+function M.event_of(session)
+  return {
+    clientRef = session.id,
+    kind = session.kind or "rehearsal",
+    heldAt = session.heldAt,
+    label = session.label,
+    venue = session.venue,
+    notes = session.notes,
+    -- Where the session starts on the project timeline. Take positions are
+    -- absolute project seconds, so without this nothing downstream can turn
+    -- one into a wall-clock time.
+    rangeStart = session.range and session.range.start,
+  }
+end
+
+-- Brings a manifest's event block back in line with the session record.
+--
+-- Editing a rehearsal's venue writes the sidecar, and the uploader reads the
+-- manifest -- so without this the correction reached the library only after a
+-- full re-render, hours of re-encoding audio that had not changed, to alter a
+-- string. Rewritten wholesale rather than merged, so clearing a field clears
+-- it here too.
+--
+-- Refuses a manifest belonging to a different session: `clientRef` is
+-- identity, and rewriting somebody else's event block would relabel a whole
+-- rehearsal. Returns whether it did anything.
+function M.refresh_event(manifest, session)
+  if type(manifest) ~= "table" or type(manifest.event) ~= "table" then return false end
+  if manifest.event.clientRef and manifest.event.clientRef ~= session.id then
+    return false
+  end
+  manifest.event = M.event_of(session)
+  return true
+end
+
 -- take rows are { guid, start, stop, song, label, take_no, instruments, assets }
 -- assets are { kind, instrument, format, path, bytes, sha256, sampleRate, channels }
 function M.build(session, takes)
   local out = {
     schema = M.SCHEMA,
-    event = {
-      clientRef = session.id,
-      kind = session.kind or "rehearsal",
-      heldAt = session.heldAt,
-      label = session.label,
-      venue = session.venue,
-      -- Where the session starts on the project timeline. Take positions are
-      -- absolute project seconds, so without this nothing downstream can turn
-      -- one into a wall-clock time.
-      rangeStart = session.range and session.range.start,
-    },
+    event = M.event_of(session),
     takes = {},
   }
 
