@@ -80,7 +80,15 @@ end
 -- is per session, so a run covering takes 6-10 would otherwise overwrite the
 -- manifest listing takes 1-5, orphaning their audio and quietly removing them
 -- from the reference library on the next index.
-function M.merge(existing, fresh)
+--
+-- `known_refs`, when given, is the set of clientRefs the project STILL has a
+-- region for. Keeping an entry only means "not rendered this time", and on its
+-- own that is indistinguishable from "the region is gone" -- so a take deleted
+-- and re-cut in REAPER left its old entry behind for good, pointing at a
+-- folder whose audio now belongs to whatever took its place, and refusing to
+-- upload ever after. Pass nil where the full region set is not known and
+-- nothing is dropped.
+function M.merge(existing, fresh, known_refs)
   if type(existing) ~= "table" or type(existing.takes) ~= "table" then
     return fresh
   end
@@ -88,8 +96,12 @@ function M.merge(existing, fresh)
   local merged = {}
   local at = {}
   for _, take in ipairs(existing.takes) do
-    merged[#merged + 1] = take
-    if take.clientRef then at[take.clientRef] = #merged end
+    -- An entry with no clientRef cannot be checked, so it is never dropped.
+    local gone = known_refs and take.clientRef and not known_refs[take.clientRef]
+    if not gone then
+      merged[#merged + 1] = take
+      if take.clientRef then at[take.clientRef] = #merged end
+    end
   end
   for _, take in ipairs(fresh.takes) do
     local index = take.clientRef and at[take.clientRef]
@@ -104,6 +116,35 @@ function M.merge(existing, fresh)
   table.sort(merged, function(a, b) return (a.start or 0) < (b.start or 0) end)
   fresh.takes = merged
   return fresh
+end
+
+-- Which of `dirs` no take in `manifest` has any file in.
+--
+-- Compared against the WHOLE manifest, never against one render's output:
+-- rendering a two-take time selection inside a twelve-take session leaves the
+-- other ten untouched, and their folders are still exactly where the manifest
+-- says their audio lives. Judging by what was just rendered would delete them.
+--
+-- A directory is claimed if any asset path lies inside it, so a take folder is
+-- kept by its own master as well as by the stems one level down.
+function M.orphan_dirs(manifest, dirs)
+  local claimed = {}
+  for _, take in ipairs((manifest or {}).takes or {}) do
+    for _, asset in ipairs(take.assets or {}) do
+      if asset.path then claimed[#claimed + 1] = asset.path end
+    end
+  end
+
+  local out = {}
+  for _, dir in ipairs(dirs or {}) do
+    local prefix = dir:gsub("/+$", "") .. "/"
+    local used = false
+    for _, path in ipairs(claimed) do
+      if path:sub(1, #prefix) == prefix then used = true break end
+    end
+    if not used then out[#out + 1] = dir end
+  end
+  return out
 end
 
 -- Takes that cannot be sent downstream, with the reason. Reporting these beats

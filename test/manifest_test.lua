@@ -127,4 +127,96 @@ function T.the_event_records_where_the_session_starts_on_the_timeline()
   h.assert_eq(m.event.rangeStart, 1000)
 end
 
+-- Orphaned take folders
+
+local function manifest_with(paths)
+  local takes = {}
+  for _, p in ipairs(paths) do
+    takes[#takes + 1] = { assets = { { path = p } } }
+  end
+  return { takes = takes }
+end
+
+function T.a_folder_no_take_uses_is_orphaned()
+  local m = manifest_with({ "/out/01-boj-take-1-aaaaaaaa/master.mp3" })
+  local orphans = manifest.orphan_dirs(m, {
+    "/out/01-boj-take-1-aaaaaaaa", "/out/01-boj-take-1" })
+  h.assert_eq(#orphans, 1)
+  h.assert_eq(orphans[1], "/out/01-boj-take-1")
+end
+
+function T.a_folder_is_kept_by_a_stem_one_level_down()
+  local m = manifest_with({ "/out/01-boj-take-1-aaaaaaaa/stems/bass.mp3" })
+  h.assert_eq(#manifest.orphan_dirs(m, { "/out/01-boj-take-1-aaaaaaaa" }), 0)
+end
+
+function T.takes_this_render_did_not_touch_keep_their_folders()
+  -- The whole reason this runs against the merged manifest: a partial render
+  -- must not delete the rest of the session.
+  local m = manifest_with({
+    "/out/01-boj-take-1-aaaaaaaa/master.mp3",
+    "/out/09-divko-take-2-bbbbbbbb/master.mp3",
+  })
+  h.assert_eq(#manifest.orphan_dirs(m, {
+    "/out/01-boj-take-1-aaaaaaaa", "/out/09-divko-take-2-bbbbbbbb" }), 0)
+end
+
+function T.a_folder_whose_name_merely_starts_the_same_is_not_kept()
+  local m = manifest_with({ "/out/01-boj-take-1/master.mp3" })
+  local orphans = manifest.orphan_dirs(m, { "/out/01-boj-take-10" })
+  h.assert_eq(#orphans, 1, "01-boj-take-10 is not 01-boj-take-1")
+end
+
+function T.nothing_is_orphaned_when_there_is_no_manifest()
+  h.assert_eq(#manifest.orphan_dirs(nil, { "/out/anything" }), 1)
+  h.assert_eq(#manifest.orphan_dirs({ takes = {} }, {}), 0)
+end
+
+-- Takes whose region no longer exists
+
+local function take_at(ref, start)
+  return { clientRef = ref, start = start, assets = { { path = "/out/" .. ref .. "/master.mp3" } } }
+end
+
+function T.a_take_whose_region_is_gone_is_dropped()
+  -- Deleted and re-cut in REAPER: the old entry pointed at a folder whose
+  -- audio belonged to whatever replaced it, and blocked every upload after.
+  local existing = { takes = { take_at("a", 1), take_at("ghost", 2) } }
+  local fresh = { takes = { take_at("a", 1) } }
+  local out = manifest.merge(existing, fresh, { a = true })
+  h.assert_eq(#out.takes, 1)
+  h.assert_eq(out.takes[1].clientRef, "a")
+end
+
+function T.a_take_not_rendered_this_time_is_kept_if_its_region_lives()
+  -- The reason merge exists: a partial render must not drop the rest.
+  local existing = { takes = { take_at("a", 1), take_at("b", 2) } }
+  local fresh = { takes = { take_at("a", 1) } }
+  local out = manifest.merge(existing, fresh, { a = true, b = true })
+  h.assert_eq(#out.takes, 2)
+end
+
+function T.without_a_known_region_set_nothing_is_dropped()
+  local existing = { takes = { take_at("a", 1), take_at("ghost", 2) } }
+  local out = manifest.merge(existing, { takes = { take_at("a", 1) } })
+  h.assert_eq(#out.takes, 2, "no set given means no judgement")
+end
+
+function T.an_entry_with_no_ref_survives_because_it_cannot_be_checked()
+  local existing = { takes = { { start = 1, assets = {} }, take_at("ghost", 2) } }
+  local out = manifest.merge(existing, { takes = {} }, { a = true })
+  h.assert_eq(#out.takes, 1)
+  h.assert_eq(out.takes[1].clientRef, nil)
+end
+
+function T.a_dropped_takes_folder_then_reads_as_orphaned()
+  -- The two halves together: the entry goes, and the cleanup can see the
+  -- folder is unclaimed.
+  local existing = { takes = { take_at("a", 1), take_at("ghost", 2) } }
+  local out = manifest.merge(existing, { takes = { take_at("a", 1) } }, { a = true })
+  local orphans = manifest.orphan_dirs(out, { "/out/a", "/out/ghost" })
+  h.assert_eq(#orphans, 1)
+  h.assert_eq(orphans[1], "/out/ghost")
+end
+
 return T

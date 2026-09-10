@@ -83,6 +83,55 @@ function M.output_format()
   return math.floor(srate), math.floor(channels)
 end
 
+-- The files directly inside `dir`, as full paths. Not recursive.
+function M.files_in(dir)
+  local out, idx = {}, 0
+  while true do
+    local name = reaper.EnumerateFiles(dir, idx)
+    if not name then break end
+    out[#out + 1] = dir .. "/" .. name
+    idx = idx + 1
+  end
+  return out
+end
+
+-- The directories directly inside `dir`, as full paths. Not recursive.
+function M.dirs_in(dir)
+  local out, idx = {}, 0
+  while true do
+    local name = reaper.EnumerateSubdirectories(dir, idx)
+    if not name then break end
+    out[#out + 1] = dir .. "/" .. name
+    idx = idx + 1
+  end
+  return out
+end
+
+-- Removes a take's output directory and everything in it.
+--
+-- REAPER will not silently overwrite a file it is about to render: it asks,
+-- once per file, which on a session of a dozen takes with stems is a hundred
+-- dialogs -- and answering "no" to any of them leaves a folder mixing this
+-- render's audio with the last one's. Starting from nothing is the only way
+-- the folder's contents describe exactly one render.
+--
+-- One level of subdirectories deep, which is all a take folder ever has
+-- (`stems/`). Returns how many files went, for the log.
+function M.remove_tree(dir)
+  local removed = 0
+  for _, sub in ipairs(M.dirs_in(dir)) do
+    for _, path in ipairs(M.files_in(sub)) do
+      if os.remove(path) then removed = removed + 1 end
+    end
+    os.remove(sub)
+  end
+  for _, path in ipairs(M.files_in(dir)) do
+    if os.remove(path) then removed = removed + 1 end
+  end
+  os.remove(dir)
+  return removed
+end
+
 function M.file_info(path)
   local f = io.open(path, "rb")
   if not f then return nil end
@@ -116,16 +165,7 @@ function M.stems(dir, tracks, start_time, stop_time, log)
   -- Start from an empty directory. A previous run's stems linger otherwise,
   -- and a slug that disappears from the mapping would leave a stale file
   -- claiming to be part of this take.
-  do
-    local existing, idx = {}, 0
-    while true do
-      local name = reaper.EnumerateFiles(dir, idx)
-      if not name then break end
-      existing[#existing + 1] = dir .. "/" .. name
-      idx = idx + 1
-    end
-    for _, path in ipairs(existing) do os.remove(path) end
-  end
+  for _, path in ipairs(M.files_in(dir)) do os.remove(path) end
 
   local saved = snapshot()
 

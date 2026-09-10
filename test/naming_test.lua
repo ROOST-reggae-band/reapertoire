@@ -171,4 +171,38 @@ function T.a_note_survives_a_title_spelled_without_diacritics()
   h.assert_eq(label, "slow version")
 end
 
+-- Take folders
+
+function T.a_take_folder_carries_the_regions_own_identity()
+  local a = naming.take_folder(1, "Roost rád mám", "take 1",
+    "{9C6799CD-AACF-2B42-8AB8-7D869CAF5F2A}")
+  h.assert_eq(a, "01-roost-rad-mam-take-1-9c6799cd")
+end
+
+function T.two_takes_at_the_same_position_do_not_share_a_folder()
+  -- The bug this exists for: a different time selection makes a different
+  -- region take 1 at index 1, and it overwrote the other take's audio.
+  local a = naming.take_folder(1, "Čoudy", "take 1", "{9C6799CD-AACF-2B42-8AB8-7D869CAF5F2A}")
+  local b = naming.take_folder(1, "Čoudy", "take 1", "{D5E2FF98-BB7C-744F-9C78-0FAF43AC35E0}")
+  h.assert_eq(a ~= b, true, "same folder for two regions")
+end
+
+function T.the_same_region_always_lands_in_the_same_folder()
+  local guid = "{9C6799CD-AACF-2B42-8AB8-7D869CAF5F2A}"
+  h.assert_eq(naming.take_folder(3, "Boj", "take 2", guid),
+              naming.take_folder(3, "Boj", "take 2", guid))
+end
+
+function T.a_take_with_no_guid_still_gets_a_usable_folder()
+  -- Region GUIDs are unavailable on some REAPER builds; the name degrades to
+  -- what it was rather than becoming nil.
+  h.assert_eq(naming.take_folder(2, "Dívko", "take 4", nil), "02-divko-take-4")
+  h.assert_eq(naming.take_folder(2, "Dívko", "take 4", ""), "02-divko-take-4")
+end
+
+function T.a_take_with_no_note_has_no_trailing_separator()
+  h.assert_eq(naming.take_folder(7, "Boj", "", "{ABCDEF01-0000-0000-0000-000000000000}"),
+              "07-boj-abcdef01")
+end
+
 return T

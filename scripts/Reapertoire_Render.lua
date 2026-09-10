@@ -22,6 +22,7 @@ local session_lib = require("lib.session")
 local manifest_lib = require("lib.manifest")
 local json = require("lib.util.json")
 local text = require("lib.util.text")
+local time = require("lib.util.time")
 
 local function log(fmt, ...)
   reaper.ShowConsoleMsg(string.format(fmt .. "\n", ...))
@@ -63,18 +64,34 @@ local sidecar_path = project_dir .. "/" .. session_lib.FILENAME
 local doc = session_lib.decode(adapter.read_file(sidecar_path))
 local found, how, candidates = session_lib.find(doc, sel_start, sel_stop)
 
+-- Two rehearsals recorded on one evening carry the same label and the same
+-- date, so a name and a date alone name neither of them -- "session
+-- (2026-04-07), session (2026-04-07)" tells you nothing about where to put the
+-- selection. The time range does, and it is the only thing that distinguishes
+-- them, since a session IS the range it occupies.
 local function describe(list)
-  local names = {}
+  local lines = {}
   for _, s in ipairs(list) do
-    names[#names + 1] = string.format("%s (%s)", s.label or s.id,
-      (s.heldAt or "undated"):sub(1, 10))
+    local range = s.range or {}
+    local where = ""
+    if range.start and range.stop then
+      where = string.format("  %s to %s  (%.0f min, %d take%s)",
+        time.hms(range.start), time.hms(range.stop),
+        (range.stop - range.start) / 60,
+        #(s.takes or {}), #(s.takes or {}) == 1 and "" or "s")
+    end
+    lines[#lines + 1] = string.format("%s (%s)%s", s.label or s.id,
+      (s.heldAt or "undated"):sub(1, 10), where)
   end
-  return table.concat(names, ", ")
+  return table.concat(lines, "\n  ")
 end
 
 if how == "ambiguous" then
-  log("This selection covers %d sessions: %s", #candidates, describe(candidates))
-  log("Narrow it to one rehearsal and run again.")
+  log("This selection covers %d sessions:\n  %s", #candidates, describe(candidates))
+  log("Narrow it to one of those ranges and run again.")
+  log("Deleting a session's output folder does not remove the session -- the")
+  log("record lives beside the .rpp so it survives the media folder being")
+  log("cleaned out.")
   return
 end
 
@@ -82,7 +99,7 @@ if how == "partial" then
   -- Rehearsals sit end to end, so a few seconds of overlap is a near miss
   -- rather than a match. Filing takes under the neighbouring session silently
   -- is worse than stopping.
-  log("This selection only clips the edge of: %s", describe(candidates))
+  log("This selection only clips the edge of:\n  %s", describe(candidates))
   log("It is not enough overlap to call it the same rehearsal, and not")
   log("obviously a different one either.")
   log("Either extend the selection over that session, or move it clear of it.")
@@ -147,6 +164,14 @@ end
 
 local songs = songs_lib.load(cfg)
 local rows = {}
+-- Every region the project still has, selection or not. This is what tells a
+-- manifest entry that was merely not rendered this time from one whose region
+-- has been deleted -- see `manifest.merge`.
+local live_refs = {}
+for _, r in ipairs(regions.all()) do
+  local ref = manifest_lib.take_ref(r.guid)
+  if ref then live_refs[ref] = true end
+end
 for _, r in ipairs(regions.all()) do
   if r.start < sel_stop and sel_start < r.stop then
     local song, label = naming.parse(r.name, songs)
@@ -194,6 +219,33 @@ end
 -- one duplicates audio already captured by the individual mics. A rule may also
 -- opt a track out explicitly, for a submix fed by sends, which looks like any
 -- other track.
+-- Writes one waveform file and returns the manifest asset for it, or nil if
+-- it could not be written or has nothing to say.
+--
+-- `sources` are the tracks the picture is drawn from: every track for the
+-- master, one track for a stem. `slug` names the source the waveform belongs
+-- to -- absent for the master, which is what the contract's `instrument`
+-- field means on a peaks asset.
+local function write_peaks(path, sources, i0, i1, slug)
+  -- A programmed part has no readable levels, so its envelope would come out
+  -- flat -- and a flat waveform reads as silence, which is worse than the
+  -- plain rail the player falls back to when there is no file at all.
+  local usable = {}
+  for _, t in ipairs(sources) do
+    if not t.programmed then usable[#usable + 1] = t end
+  end
+  if #usable == 0 then return nil end
+
+  local handle = io.open(path, "w")
+  if not handle then return nil end
+  handle:write(json.encode(peaks_lib.folded(usable, i0, i1)))
+  handle:close()
+  return {
+    kind = "peaks", tier = "lossy", format = "json", instrument = slug,
+    path = path, bytes = render.file_info(path), sha256 = render.sha256(path),
+  }
+end
+
 local track_for_slug = {}
 local excluded = {}
 for _, t in ipairs(classified.tracks) do
@@ -244,7 +296,15 @@ log("Rendering %d take%s to %s", #rows, #rows == 1 and "" or "s", out_dir)
 
 local rendered = {}
 for i, row in ipairs(rows) do
-  local folder = string.format("%s/%02d-%s-%s", out_dir, i, text.slug(row.song), text.slug(row.label))
+  local folder = out_dir .. "/" .. naming.take_folder(i, row.song, row.label, row.guid)
+  -- Cleared, not overwritten. REAPER asks before replacing each file it is
+  -- about to render -- a hundred dialogs on a session with stems -- and any
+  -- "no" leaves the folder mixing this render with the last one's. Safe now
+  -- that the folder carries the region's own GUID: it holds this take's
+  -- output and nothing else.
+  local swept = render.remove_tree(folder)
+  if swept > 0 then log("      cleared %d file%s from a previous render",
+    swept, swept == 1 and "" or "s") end
   reaper.RecursiveCreateDirectory(folder, 0)
 
   local srate, channels = render.output_format()
@@ -271,17 +331,9 @@ for i, row in ipairs(rows) do
     -- Peaks, from level data already in hand. A browser would have to download
     -- and decode the whole file to draw the same picture.
     local i0, i1 = frames_util.range_of(row, sel_start, rate, classified.n_frames)
-    local peaks_path = folder .. "/peaks.json"
-    local pf = io.open(peaks_path, "w")
-    if pf then
-      pf:write(json.encode(peaks_lib.folded(classified.tracks, i0, i1)))
-      pf:close()
-      row.assets[#row.assets + 1] = {
-        kind = "peaks", tier = "lossy", format = "json",
-        path = peaks_path, bytes = render.file_info(peaks_path),
-        sha256 = render.sha256(peaks_path),
-      }
-    end
+    local master_peaks = write_peaks(
+      folder .. "/peaks.json", classified.tracks, i0, i1, nil)
+    if master_peaks then row.assets[#row.assets + 1] = master_peaks end
 
     -- Stems, only for instruments actually played on this take. An absent
     -- player must not produce a silent file.
@@ -308,6 +360,16 @@ for i, row in ipairs(rows) do
             sampleRate = srate > 0 and srate or nil,
             channels = channels > 0 and channels or nil,
           }
+          -- A waveform per source, not per take: soloing a stem redraws, and
+          -- with only the master's shape stored every stem drew the whole
+          -- band's.
+          local track = track_for_slug[slug]
+          if track then
+            local stem_peaks = write_peaks(
+              string.format("%s/peaks-%s.json", folder, slug),
+              { track }, i0, i1, slug)
+            if stem_peaks then row.assets[#row.assets + 1] = stem_peaks end
+          end
         end
         log("      %d stem%s%s", n, n == 1 and "" or "s",
           #missing > 0 and (" (missing: " .. table.concat(missing, ", ") .. ")") or "")
@@ -327,13 +389,31 @@ local manifest_path = out_dir .. "/manifest.json"
 local existing = adapter.read_file(manifest_path)
 local manifest = manifest_lib.merge(
   existing and json.decode(existing) or nil,
-  manifest_lib.build(session, rendered))
+  manifest_lib.build(session, rendered),
+  live_refs)
 local problems = manifest_lib.problems(manifest)
 local f = io.open(manifest_path, "w")
 if f then
   f:write(json.encode(manifest, { indent = true }))
   f:close()
   log("Manifest written to %s", manifest_path)
+
+  -- Folders nothing in the manifest points at any more: takes renamed or
+  -- deleted since a previous render, and everything left behind by the old
+  -- position-based naming, which let two takes share one folder and overwrite
+  -- each other. Only after the manifest is safely on disk, and only against
+  -- the MERGED manifest -- takes this render did not touch still live where
+  -- their entries say they do.
+  local orphans = manifest_lib.orphan_dirs(manifest, render.dirs_in(out_dir))
+  if #orphans > 0 then
+    local files = 0
+    for _, dir in ipairs(orphans) do
+      files = files + render.remove_tree(dir)
+      log("  removed orphaned %s", dir:match("([^/\\]+)$") or dir)
+    end
+    log("Removed %d orphaned folder%s (%d file%s) no take points at any more",
+      #orphans, #orphans == 1 and "" or "s", files, files == 1 and "" or "s")
+  end
 else
   log("Could not write %s", manifest_path)
 end

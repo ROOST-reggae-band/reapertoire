@@ -127,6 +127,26 @@ function M.renumber(rows)
   return rows
 end
 
+-- The folder one take's renders belong in, relative to the session's output
+-- directory.
+--
+-- The GUID fragment is what makes it a take's OWN folder. Position alone --
+-- the index in the render and the take number -- is not identity: render a
+-- different time selection and a different region becomes take 1 at index 1,
+-- landing on a folder another take already owns and overwriting its audio.
+-- That is not hypothetical; it destroyed half the renders in two sessions
+-- before this existed, and the manifest, which has always keyed takes by
+-- region GUID, was left with two takes pointing at one folder.
+--
+-- The readable part stays first so the directory still sorts and reads the way
+-- a person expects.
+function M.take_folder(index, song, label, guid)
+  local name = string.format("%02d-%s-%s", index, text.slug(song or ""), text.slug(label or ""))
+  local hex = tostring(guid or ""):match("(%x%x%x%x%x%x%x%x)")
+  if hex then name = name .. "-" .. hex:lower() end
+  return (name:gsub("%-+", "-"):gsub("%-$", ""))
+end
+
 -- The name a row should carry in the project.
 function M.region_name(row)
   if not row.song or row.song == "" then return nil end
