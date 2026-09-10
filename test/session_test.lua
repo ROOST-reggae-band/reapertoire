@@ -107,22 +107,6 @@ function T.folder_name_copes_with_a_missing_date_or_label()
   h.assert_eq(session.folder_name({ heldAt = "2026-01-02T00:00:00Z" }), "2026-01-02-session")
 end
 
-function T.merging_takes_updates_by_client_ref_rather_than_duplicating()
-  local s = sess("a", 0, 100)
-  session.merge_takes(s, { { clientRef = "g1", start = 10, song = "One" } })
-  session.merge_takes(s, { { clientRef = "g1", start = 10, song = "Corrected" } })
-  h.assert_eq(#s.takes, 1, "re-rendering updates rather than appends")
-  h.assert_eq(s.takes[1].song, "Corrected")
-end
-
-function T.merged_takes_stay_in_timeline_order()
-  local s = sess("a", 0, 100)
-  session.merge_takes(s, { { clientRef = "g2", start = 90 } })
-  session.merge_takes(s, { { clientRef = "g1", start = 10 } })
-  h.assert_eq(s.takes[1].clientRef, "g1")
-  h.assert_eq(s.takes[2].clientRef, "g2")
-end
-
 function T.reads_the_recording_date_out_of_a_reaper_filename()
   local date, time = session.date_from_filename("26-Organ-260528_2125.wav")
   h.assert_eq(date, "2026-05-28")
@@ -365,6 +349,48 @@ function T.a_re_render_no_longer_wipes_the_venue_and_notes()
   session.upsert(doc, { id = "a", range = { start = 0, stop = 100 }, label = "Choltice" })
   h.assert_eq(doc.sessions[1].venue, "Sokolovna")
   h.assert_eq(doc.sessions[1].notes, "new tune")
+end
+
+-- How many takes a session has
+
+function T.recording_takes_stores_a_count_not_a_copy_of_them()
+  -- The sidecar used to hold every take in full -- assets, paths, byte counts
+  -- -- and every reader asked it only for the number.
+  local sess = { id = "a" }
+  session.record_takes(sess, { {}, {}, {} })
+  h.assert_eq(sess.takeCount, 3)
+  h.assert_eq(sess.takes, nil, "the copy is gone")
+end
+
+function T.recording_replaces_rather_than_accumulating()
+  -- The bug: takes were matched by region GUID and appended, never dropped, so
+  -- a region re-cut in REAPER left its old entry behind for good. One session
+  -- reached 24 entries against 12 real takes.
+  local sess = { id = "a" }
+  session.record_takes(sess, { {}, {}, {} })
+  session.record_takes(sess, { {}, {} })
+  h.assert_eq(session.take_count(sess), 2)
+end
+
+function T.the_count_reads_back_from_a_sidecar_written_before_the_change()
+  -- Old records carry the array and no count; they must not read as zero
+  -- until the next render rewrites them.
+  h.assert_eq(session.take_count({ takes = { {}, {}, {}, {} } }), 4)
+end
+
+function T.a_stored_count_wins_over_a_leftover_array()
+  h.assert_eq(session.take_count({ takeCount = 2, takes = { {}, {}, {} } }), 2)
+end
+
+function T.a_session_with_neither_counts_zero()
+  h.assert_eq(session.take_count({}), 0)
+end
+
+function T.the_markers_count_takes_the_same_way()
+  local m = session.span_markers({
+    label = "Nota", heldAt = "2025-07-30T19:00:00+02:00",
+    range = { start = 0, stop = 10 }, takeCount = 12 })
+  h.assert_eq(m[1].name:match("12 takes") ~= nil, true, m[1].name)
 end
 
 return T

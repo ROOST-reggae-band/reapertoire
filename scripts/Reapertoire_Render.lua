@@ -78,7 +78,7 @@ local function describe(list)
       where = string.format("  %s to %s  (%.0f min, %d take%s)",
         time.hms(range.start), time.hms(range.stop),
         (range.stop - range.start) / 60,
-        #(s.takes or {}), #(s.takes or {}) == 1 and "" or "s")
+        session_lib.take_count(s), session_lib.take_count(s) == 1 and "" or "s")
     end
     lines[#lines + 1] = string.format("%s (%s)%s", s.label or s.id,
       (s.heldAt or "undated"):sub(1, 10), where)
@@ -418,7 +418,9 @@ else
   log("Could not write %s", manifest_path)
 end
 
-session_lib.merge_takes(session, manifest.takes)
+-- The count, not the takes: the manifest owns those, and a copy in the
+-- sidecar drifted from it silently. See `session.record_takes`.
+session_lib.record_takes(session, manifest.takes)
 session_lib.upsert(doc, session)
 
 local tmp = sidecar_path .. ".tmp"

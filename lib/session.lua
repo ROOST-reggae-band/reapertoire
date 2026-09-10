@@ -213,7 +213,7 @@ function M.span_markers(session)
   local label = session.label
   if not label or label == "" then label = "rehearsal" end
 
-  local count = #(session.takes or {})
+  local count = M.take_count(session)
   local takes
   if count == 0 then
     -- Distinguishes a rehearsal nobody has rendered from one that rendered
@@ -229,25 +229,30 @@ function M.span_markers(session)
   }
 end
 
--- Merges freshly rendered takes into a session, matched on the region GUID so
--- a re-render updates a take rather than duplicating it.
-function M.merge_takes(session, takes)
-  session.takes = session.takes or {}
-  local by_ref = {}
-  for i, existing in ipairs(session.takes) do
-    if existing.clientRef then by_ref[existing.clientRef] = i end
-  end
-  for _, take in ipairs(takes) do
-    local at = take.clientRef and by_ref[take.clientRef]
-    if at then
-      session.takes[at] = take
-    else
-      session.takes[#session.takes + 1] = take
-      if take.clientRef then by_ref[take.clientRef] = #session.takes end
-    end
-  end
-  table.sort(session.takes, function(a, b) return (a.start or 0) < (b.start or 0) end)
-  return session.takes
+-- How many takes a session has rendered.
+--
+-- `takes` is what sidecars written before this carried: the whole list, copied
+-- from the manifest. Read through here so those keep reporting correctly until
+-- the next render rewrites them as a count.
+function M.take_count(session)
+  if session.takeCount then return session.takeCount end
+  return #(session.takes or {})
+end
+
+-- Records how many takes a render produced.
+--
+-- A COUNT, not the takes. The sidecar used to hold a full copy of every one --
+-- assets, paths, byte counts -- while every reader asked it only for the
+-- number, and the copy was merged by region GUID and never pruned: a region
+-- re-cut in REAPER left its old entry behind for good. One session reached 24
+-- entries against 12 real takes, and nothing noticed because nothing read them.
+--
+-- The manifest owns take data. A number cannot drift into a different SET of
+-- takes the way a duplicated list can, which is the whole point of storing one.
+function M.record_takes(session, takes)
+  session.takeCount = #(takes or {})
+  session.takes = nil
+  return session.takeCount
 end
 
 -- Recording date from a source filename.

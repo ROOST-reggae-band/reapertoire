@@ -163,7 +163,7 @@ local function frame()
         local shown = string.format("%s %-14s %s  %d take%s",
           (s.heldAt or "undated"):sub(1, 10), s.label or "(unlabelled)",
           range.start and time.hms(range.start) or "?",
-          #(s.takes or {}), #(s.takes or {}) == 1 and "" or "s")
+          session_lib.take_count(s), session_lib.take_count(s) == 1 and "" or "s")
         if ImGui.Selectable(ctx, shown, i == selected) then
           selected = i
           load_edits()
@@ -211,7 +211,7 @@ local function frame()
           ImGui.Text(ctx, "No recorded range -- it will not be marked on the timeline.")
         end
         ImGui.Text(ctx, string.format("%d take%s rendered",
-          #(s.takes or {}), #(s.takes or {}) == 1 and "" or "s"))
+          session_lib.take_count(s), session_lib.take_count(s) == 1 and "" or "s"))
         ImGui.Text(ctx, s.outputDir or "(not rendered yet)")
       else
         ImGui.Text(ctx, "No rehearsals recorded yet.")
