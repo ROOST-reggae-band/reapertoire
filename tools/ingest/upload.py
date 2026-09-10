@@ -17,10 +17,13 @@ Standard library only: urllib, hashlib, json. Nothing here should need
 installing to work.
 
     upload.py --manifest .../manifest.json --api https://example/api/ingest/v1
-    upload.py --manifest ... --api ... --dry-run
-    upload.py --manifest ... --api ... --no-publish
+    upload.py --manifest ... --dry-run
+    upload.py --manifest ... --no-publish
 
-The token comes from REAPERTOIRE_TOKEN and is never written anywhere.
+The API base URL and the token both come from the `ingest` block of
+`config/settings.json`, which is gitignored, so neither has to be retyped per
+run. REAPERTOIRE_TOKEN overrides the stored token and `--api` overrides the
+stored URL, which is what a CI run or a push at somebody else's server wants.
 """
 
 import argparse
@@ -39,6 +42,12 @@ from pathlib import Path
 # outlive that, so a 403 mid-upload is normal operation rather than an error:
 # re-declare the take, take the fresh URLs, carry on.
 EXPIRY_STATUS = 403
+
+# Identifies the client on every request. urllib otherwise announces itself as
+# `Python-urllib/3.x`, which a CDN's bot protection blocks outright -- a bare
+# 403 carrying an HTML page and "error code: 1010", nothing to do with the
+# token or the API. Naming the tool is what any HTTP client should do anyway.
+USER_AGENT = "reapertoire (+https://github.com/ROOST-reggae-band/reapertoire)"
 
 # Server-side faults only. The contract is explicit that the ingest surface has
 # no rate limiting in v1 and never returns 429 -- "don't build retry-on-429
@@ -65,6 +74,89 @@ class IngestError(Exception):
     """An error the operator needs to see, with the API's own words."""
 
 
+def human_bytes(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024.0
+
+
+class Progress:
+    """A one-line upload bar, redrawn in place.
+
+    Silent unless the output is a terminal: piped into a file or a log, a
+    carriage return every few hundred kilobytes produces an unreadable mess,
+    and the per-take lines already say what happened. Silent in a dry run too,
+    where nothing is sent.
+
+    Counts bytes actually PUT, not bytes declared -- an asset the server
+    already has is skipped, and counting it would show a session "uploading"
+    at a speed no uplink has.
+    """
+
+    BAR_WIDTH = 24
+
+    def __init__(self, total_bytes, total_takes, stream=None, mode="auto"):
+        # How wide the last line was, so clearing wipes exactly that and no
+        # more -- padding every line to a fixed width wraps on a narrow window.
+        self._width = 0
+        self.total = max(0, total_bytes)
+        self.total_takes = total_takes
+        self.done = 0
+        self.take = 0
+        self.label = ""
+        self.stream = stream if stream is not None else sys.stderr
+        # "auto" is right for a log file and wrong for a terminal emulator
+        # that does not report itself as one -- an editor's output pane, a CI
+        # runner, anything wrapping the process. Hence the override.
+        if mode == "never":
+            self.enabled = False
+        elif mode == "always":
+            self.enabled = bool(total_bytes)
+        else:
+            self.enabled = bool(total_bytes) and self.stream.isatty()
+        self.started = time.monotonic()
+
+    def take_started(self, index, name):
+        # Recorded, not drawn. A run that sends nothing -- every asset already
+        # on the server, which is the common case on a re-run -- would
+        # otherwise flash an empty bar per take and clear it again, which is
+        # noise saying "0%" about work that is not happening.
+        self.take, self.label = index, name
+
+    def advance(self, n):
+        self.done += n
+        self.draw()
+
+    @property
+    def drawn(self):
+        return self._width > 0
+
+    def draw(self):
+        if not self.enabled:
+            return
+        fraction = min(1.0, self.done / self.total) if self.total else 0.0
+        filled = int(fraction * self.BAR_WIDTH)
+        elapsed = time.monotonic() - self.started
+        rate = f"{human_bytes(self.done / elapsed)}/s" if elapsed > 1 and self.done else "--"
+        line = (f"\r[{'#' * filled}{'.' * (self.BAR_WIDTH - filled)}] {fraction * 100:3.0f}% "
+                f"{human_bytes(self.done)}/{human_bytes(self.total)} "
+                f"{rate}  take {self.take}/{self.total_takes} {self.label}")
+        # Padded to overwrite a longer previous line, since \r only returns the
+        # cursor and leaves whatever was already there.
+        line = line[:120]
+        self.stream.write(line.ljust(self._width))
+        self.stream.flush()
+        self._width = max(0, len(line) - 1)
+
+    def done_with_all(self):
+        """Wipes the bar so the next log line starts on a clean row."""
+        if self.enabled and self.drawn:
+            self.stream.write("\r" + " " * self._width + "\r")
+            self.stream.flush()
+            self._width = 0
+
+
 class Client:
     def __init__(self, base_url, token, timeout=120):
         self.base = base_url.rstrip("/")
@@ -76,7 +168,7 @@ class Client:
     def _request(self, method, path, body=None, headers=None):
         url = path if path.startswith("http") else f"{self.base}{path}"
         data = None
-        merged = {"Authorization": f"Bearer {self.token}"}
+        merged = {"Authorization": f"Bearer {self.token}", "User-Agent": USER_AGENT}
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             merged["Content-Type"] = "application/json"
@@ -92,7 +184,15 @@ class Client:
             try:
                 payload = json.loads(raw) if raw else {}
             except json.JSONDecodeError:
-                payload = {"error": {"code": "unparseable", "message": raw[:200].decode("utf-8", "replace")}}
+                # Not the API answering: the ingest surface always speaks JSON,
+                # so an unparseable body means something in front of it -- a
+                # CDN, a proxy, a captive portal -- replied instead.
+                text = raw[:400].decode("utf-8", "replace")
+                snippet = " ".join(re.sub(r"<[^>]+>", " ", text).split())[:200]
+                payload = {"error": {
+                    "code": "not_the_api",
+                    "message": f"something in front of the API answered, not the API itself: {snippet}",
+                }}
             return error.status, payload
         except urllib.error.URLError as error:
             raise IngestError(f"cannot reach {url}: {error.reason}") from error
@@ -135,10 +235,46 @@ class Client:
     def commit(self, take_id, publish=True):
         return self._json("POST", f"/takes/{take_id}/commit", {"publish": publish})
 
-    def put_bytes(self, url, headers, path):
-        """Uploads one file. Returns True, or False when the URL has expired."""
-        body = Path(path).read_bytes()
-        request = urllib.request.Request(url, data=body, headers=headers or {}, method="PUT")
+    def put_bytes(self, url, headers, path, on_progress=None):
+        """Uploads one file. Returns True, or False when the URL has expired.
+
+        Streamed from disk rather than read into memory: a lossless master is
+        the size the contract's own "Size" section anticipates growing to, and
+        a progress bar that only moves between files says nothing during the
+        one file that takes a minute.
+        """
+        # Checked again here, not just in `verify_assets`. That runs once
+        # before anything is declared, and a session pushing gigabytes stays
+        # open for a long time afterwards -- long enough for a re-render to
+        # clear a take's folder, or for the whole directory to be moved or
+        # deleted, while the run is still going. Letting the open() below
+        # raise gives a traceback out of pathlib and says nothing useful.
+        try:
+            size = Path(path).stat().st_size
+        except OSError as error:
+            raise IngestError(
+                f"{path} vanished while the session was uploading: {error.strerror}.\n"
+                "Something changed the files underneath the run -- a re-render, or the\n"
+                "folder being moved. Re-run once it has settled; takes already sent are\n"
+                "skipped rather than sent twice."
+            ) from error
+        # The presigned headers go up exactly as issued; the agent is added
+        # alongside them, never over one. It is not among the headers the
+        # signature covers, so it cannot invalidate the URL.
+        merged = {"User-Agent": USER_AGENT}
+        merged.update(headers or {})
+        # Explicit, because urllib falls back to chunked transfer-encoding for
+        # a body it cannot measure -- which a presigned S3 PUT rejects.
+        merged["Content-Length"] = str(size)
+
+        try:
+            handle = open(path, "rb")
+        except OSError as error:
+            raise IngestError(
+                f"{path} vanished while the session was uploading: {error.strerror}"
+            ) from error
+        body = _ReportingReader(handle, on_progress) if on_progress else handle
+        request = urllib.request.Request(url, data=body, headers=merged, method="PUT")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return 200 <= response.status < 300
@@ -148,6 +284,32 @@ class Client:
             raise IngestError(f"upload of {Path(path).name} failed: HTTP {error.status}")
         except urllib.error.URLError as error:
             raise IngestError(f"upload of {Path(path).name} failed: {error.reason}") from error
+        finally:
+            handle.close()
+
+
+class _ReportingReader:
+    """A read-only file wrapper that reports how much has gone up.
+
+    urllib asks for the body in blocks, so counting reads counts what has been
+    handed to the socket. That is not the same as what the far end has
+    acknowledged -- the last few blocks may still be in flight -- but for a bar
+    measured in hundreds of megabytes the difference is invisible, and the
+    alternative is no feedback at all.
+    """
+
+    def __init__(self, handle, on_progress):
+        self._handle = handle
+        self._on_progress = on_progress
+
+    def read(self, size=-1):
+        block = self._handle.read(size)
+        if block:
+            self._on_progress(len(block))
+        return block
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
 
 
 def _describe(status, payload):
@@ -224,11 +386,15 @@ def _asset_problems(asset, where):
     if kind == "peaks":
         if fmt != "json":
             problems.append(f"{where}: peaks must be json, not {fmt!r}")
+        # Optional on peaks -- absent means the master -- but a blank string is
+        # not the same as absent, and the server rejects it.
+        if asset.get("instrument") is not None and not str(asset["instrument"]).strip():
+            problems.append(f"{where}: names a blank instrument; omit it for the master")
     else:
         if fmt not in AUDIO_FORMATS:
             problems.append(
                 f"{where}: format {fmt!r} is not one of " + ", ".join(AUDIO_FORMATS))
-        if kind == "stem" and not asset.get("instrument"):
+        if kind == "stem" and not str(asset.get("instrument") or "").strip():
             problems.append(f"{where}: a stem must name the instrument it isolates")
 
     size = asset.get("bytes")
@@ -274,6 +440,17 @@ def contract_problems(event, takes):
             problems.append(f"{where} has no song")
         if recorded_at(event, take) is None:
             problems.append(f"{where} has no time it was recorded at")
+        # A slug the server will not accept, and one the vocabulary check
+        # cannot report: it collects slugs into a set and drops falsy ones, so
+        # a blank sails through every guard and 422s mid-run, after earlier
+        # takes are already declared and published.
+        for slug in take.get("instruments", []):
+            if not str(slug or "").strip():
+                problems.append(
+                    f"{where} lists a blank instrument, which the server rejects "
+                    f"(its instruments: {take.get('instruments')})")
+                break
+
         assets = take.get("assets") or []
         if not assets:
             problems.append(f"{where} rendered no files")
@@ -327,9 +504,16 @@ def build_take_payload(event, take):
         "clientRef": take["clientRef"],
         "eventClientRef": event["clientRef"],
         "song": {
-            # The region GUID is the most stable identifier there is: it
-            # survives the band renaming the tune.
-            "externalRef": take["clientRef"],
+            # A reference to the SONG, not to this take of it. Sending the
+            # region GUID here made contract §6's first resolution case
+            # unreachable: a GUID belongs to one take and can never match on a
+            # later ingest, so every take fell through to the title match and
+            # left another dead alias behind it -- two takes of one tune
+            # produced two aliases on the first real push. Derived from the
+            # title because the songs list carries no stable id of its own;
+            # the server normalises aliases, so case and diacritics do not
+            # split one song into two.
+            "externalRef": "reaper:song:" + (take.get("song") or "").strip(),
             "title": take.get("song"),
             "createIfMissing": True,
         },
@@ -346,7 +530,8 @@ def build_take_payload(event, take):
 # --------------------------------------------------------------------- upload
 
 
-def upload_session(manifest_path, client, publish=True, dry_run=False, log=print):
+def upload_session(manifest_path, client, publish=True, dry_run=False, log=print,
+                   progress_mode="auto"):
     manifest = json.loads(Path(manifest_path).read_text())
     base_dir = Path(manifest_path).parent
     event = manifest["event"]
@@ -357,10 +542,37 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
 
     # Unknown slugs are rejected with 422 by design, so the vocabulary is
     # checked once up front rather than discovered take by take.
-    vocabulary = client.instruments() if not dry_run else set()
-    if vocabulary:
-        used = {i for take in takes for i in take.get("instruments", [])}
+    problems = contract_problems(event, takes)
+    if problems:
+        raise IngestError("the manifest cannot be ingested as it stands:\n  "
+                          + "\n  ".join(problems))
+
+    # None means "not asked" (a dry run contacts nothing); an empty SET means
+    # the server genuinely has no vocabulary yet, which is a hard stop rather
+    # than nothing to check -- testing the set's truthiness skipped the guard
+    # entirely against a blank server and let every take earn its own 422.
+    vocabulary = None if dry_run else client.instruments()
+    if vocabulary is not None:
+        # The server validates every slug an asset names, not just the take's
+        # own instrument list -- a stem's, and a peaks asset's, which says
+        # which source that waveform describes. Checking only the list let an
+        # unknown one through to be rejected a take at a time.
+        used = {
+            i
+            for take in takes
+            for i in list(take.get("instruments", []))
+            + [a.get("instrument") for a in take.get("assets", [])
+               if a.get("kind") in ("stem", "peaks")]
+            if i
+        }
         unknown = sorted(used - vocabulary)
+        if unknown and not vocabulary:
+            raise IngestError(
+                "the server has no instrument vocabulary yet, so none of these "
+                "slugs can be accepted: " + ", ".join(unknown)
+                + "\nAn admin has to add them first -- ingest cannot create "
+                "instruments, by design."
+            )
         if unknown:
             raise IngestError(
                 "these instrument slugs are not in the server's vocabulary: "
@@ -368,11 +580,6 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
                 + "\nEdit the track mapping in config/settings.json to use: "
                 + ", ".join(sorted(vocabulary))
             )
-
-    problems = contract_problems(event, takes)
-    if problems:
-        raise IngestError("the manifest cannot be ingested as it stands:\n  "
-                          + "\n  ".join(problems))
 
     problems = []
     for take in takes:
@@ -402,8 +609,17 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
     )
     log(f"Event {'created' if result.get('created') else 'already known'}: {result.get('eventId')}")
 
+    # Sized from what the server has not got yet is impossible to know before
+    # declaring, so the bar is sized from the whole session and skipped assets
+    # simply never advance it. A resumed run therefore finishes short of 100%,
+    # which is honest: that is how much was actually sent.
+    progress = Progress(
+        sum(a.get("bytes") or 0 for t in takes for a in t.get("assets", [])),
+        len(takes), mode=progress_mode)
+
     uploaded = skipped = 0
-    for take in takes:
+    for index, take in enumerate(takes, 1):
+        progress.take_started(index, f"{take.get('song')} - {take.get('label')}")
         payload = build_take_payload(event, take)
         declared = client.declare_take(payload)
         take_id = declared["takeId"]
@@ -411,7 +627,7 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
         by_path = {}
         for asset in take.get("assets", []):
             key = (asset["kind"], asset.get("instrument"))
-            by_path[key] = asset["_resolved"]
+            by_path[key] = (asset["_resolved"], asset.get("bytes") or 0)
 
         pending = declared.get("uploads", [])
         # URLs live an hour, and a take with a dozen stems on a domestic uplink
@@ -426,13 +642,23 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
                 if slot.get("status") == "ready" or not slot.get("url"):
                     skipped += 1
                     continue
-                path = by_path.get((slot.get("kind"), slot.get("instrument")))
+                path, declared_bytes = by_path.get(
+                    (slot.get("kind"), slot.get("instrument")), (None, 0))
                 if not path:
                     raise IngestError(
                         f"the server asked for an asset the manifest does not have: "
                         f"{slot.get('kind')} {slot.get('instrument') or ''}"
                     )
-                if client.put_bytes(slot["url"], slot.get("headers"), path):
+                # Where the bar cannot draw, a line per file is the right
+                # granularity: it is the only sign of life a log gets, and a
+                # session of several hundred files stays readable.
+                if not progress.enabled:
+                    # The manifest's own figure, not a fresh stat: stat-ing a
+                    # file that has just vanished raises the exact error
+                    # `put_bytes` exists to report in readable words.
+                    log(f"    sending {Path(path).name} ({human_bytes(declared_bytes)})")
+                if client.put_bytes(slot["url"], slot.get("headers"), path,
+                                    on_progress=progress.advance):
                     uploaded += 1
                 else:
                     still_pending.append(slot)
@@ -447,36 +673,99 @@ def upload_session(manifest_path, client, publish=True, dry_run=False, log=print
                 )
             # Expired presigned URLs. Documented as normal operation on a slow
             # uplink, not an error path.
+            progress.done_with_all()
             log(f"  refreshing {len(still_pending)} expired upload URLs")
             pending = client.refresh_uploads(take_id).get("uploads", [])
 
         committed = client.commit(take_id, publish)
+        # The bar is cleared before each line so the two never interleave on
+        # one row.
+        progress.done_with_all()
         log(f"  {take.get('song')} - {take.get('label')}: {committed.get('state')}")
 
+    progress.done_with_all()
     return {"takes": len(takes), "uploaded": uploaded, "skipped": skipped}
+
+
+DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "settings.json"
+
+
+def load_settings(path):
+    """The `ingest` block of the bridge's settings, or an empty one.
+
+    A missing or unreadable settings file is not an error here: every value it
+    holds has a command-line or environment equivalent, and saying so when one
+    is actually missing beats refusing to start over a file the operator may
+    deliberately not have.
+    """
+    try:
+        settings = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    block = settings.get("ingest")
+    return block if isinstance(block, dict) else {}
+
+
+def warn_if_readable(path, log=lambda m: print(m, file=sys.stderr)):
+    """Says so when a file holding a token is readable by anyone else.
+
+    Storing the token beats retyping it, but a 644 settings file hands it to
+    every process running as any user on the machine. Advisory only -- the
+    file is the operator's to chmod, and refusing to run over it would be
+    worse than saying so.
+    """
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        return
+    if mode & 0o077:
+        log(f"warning: {path} holds a token and is readable by other users.\n"
+            f"         chmod 600 {path}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--api", required=True, help="base URL, e.g. https://host/api/ingest/v1")
+    parser.add_argument("--api", help="base URL, e.g. https://host/api/ingest/v1 "
+                                      "(default: ingest.api in the settings file)")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG),
+                        help="settings file holding the ingest block "
+                             f"(default: {DEFAULT_CONFIG})")
     parser.add_argument("--no-publish", action="store_true",
                         help="leave takes unpublished for review")
     parser.add_argument("--dry-run", action="store_true",
                         help="check the manifest and files, contact nothing")
+    parser.add_argument("--progress", choices=("auto", "always", "never"), default="auto",
+                        help="the upload bar: auto draws it only to a terminal, "
+                             "always forces it on where one is not detected")
     args = parser.parse_args()
 
-    token = os.environ.get("REAPERTOIRE_TOKEN", "")
+    settings = load_settings(args.config)
+
+    api = args.api or settings.get("api") or ""
+    if not api:
+        print("No ingest API URL.\n"
+              f"Set ingest.api in {args.config}, or pass --api.", file=sys.stderr)
+        return 2
+
+    # The environment wins so a one-off push at a different server, or a CI
+    # run with no settings file at all, needs no edit to a checked-out file.
+    token = os.environ.get("REAPERTOIRE_TOKEN") or settings.get("token") or ""
+    if token and settings.get("token") and not os.environ.get("REAPERTOIRE_TOKEN"):
+        warn_if_readable(args.config)
     if not token and not args.dry_run:
-        print("REAPERTOIRE_TOKEN is not set.\n"
-              "Issue an ingest token in the bandlib admin UI and export it:\n"
-              "  export REAPERTOIRE_TOKEN=blk_...", file=sys.stderr)
+        print("No ingest token.\n"
+              "Issue one in the bandlib admin UI (/admin/tokens, scope "
+              "ingest:write), then either\n"
+              f'  set "token" in the ingest block of {args.config}\n'
+              "  or export REAPERTOIRE_TOKEN=bpk_...", file=sys.stderr)
         return 2
 
     try:
         summary = upload_session(
-            args.manifest, Client(args.api, token),
+            args.manifest, Client(api, token),
             publish=not args.no_publish, dry_run=args.dry_run,
+            progress_mode=args.progress,
         )
     except IngestError as error:
         print(str(error), file=sys.stderr)

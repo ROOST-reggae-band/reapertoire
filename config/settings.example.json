@@ -52,6 +52,7 @@
     "probeFormat": ""
   },
   "ingest": {
-    "api": ""
+    "api": "",
+    "token": ""
   }
 }
