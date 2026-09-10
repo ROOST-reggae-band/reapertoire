@@ -13,13 +13,40 @@ local M = {}
 -- span    { start, stop }
 -- opts    { live_margin_db, presence_min_fraction }
 --
--- Returns slugs (or track names where unmapped), in track order.
+-- What to call a track in the manifest: its mapped slug, or its own name
+-- where the mapping has none.
+--
+-- Nil when it has neither. An unnamed track in REAPER reports an empty name,
+-- and `slug or name` then yields "" -- which travels all the way into the
+-- manifest and is rejected by the ingest API as a blank instrument, after
+-- earlier takes in the same run are already declared. A track nobody named
+-- and nothing maps has nothing to be called.
+local function name_of(track)
+  local label = track.slug
+  if label == nil or label == "" then label = track.name end
+  if label == nil or label == "" then return nil end
+  return label
+end
+
+-- Returns slugs (or track names where unmapped), in track order. A track with
+-- neither is left out rather than reported as "".
 function M.instruments_in(tracks, span, sel_start, rate, opts)
   local i0, i1 = frames_util.range_of(span, sel_start, rate)
 
   local out = {}
   for _, track in ipairs(tracks) do
-    if track.live then
+    if track.live and track.programmed then
+      -- No levels to threshold: a programmed part is present wherever one of
+      -- its items covers the take. Strict overlap, so an item that ends
+      -- exactly where the next take begins does not bleed into it.
+      for _, item in ipairs(track.items or {}) do
+        if item.start < span.stop and span.start < item.stop then
+          local label = name_of(track)
+          if label then out[#out + 1] = label end
+          break
+        end
+      end
+    elseif track.live then
       local threshold = track.floor_db + opts.live_margin_db
       local total, active = 0, 0
       for i = i0, i1 do
@@ -31,7 +58,8 @@ function M.instruments_in(tracks, span, sel_start, rate, opts)
         end
       end
       if total > 0 and active / total > opts.presence_min_fraction then
-        out[#out + 1] = track.slug or track.name
+        local label = name_of(track)
+        if label then out[#out + 1] = label end
       end
     end
   end

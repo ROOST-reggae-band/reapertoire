@@ -59,7 +59,13 @@ function M.classify(input)
     assert(#track.frames == n_frames, string.format(
       "track %s has %d frames, expected %d -- a frame array must span the whole selection",
       track.name or "?", #track.frames, n_frames))
-    local result = liveness.classify(track.frames, opts)
+    -- `programmed` and the item list travel with the track from the adapter:
+    -- a MIDI-driven part has no frames to judge, so liveness falls back to
+    -- whether it has items at all.
+    local result = liveness.classify(track.frames, opts, {
+      programmed = track.programmed,
+      has_items = track.items ~= nil and #track.items > 0,
+    })
     local copy = {}
     for k, v in pairs(track) do copy[k] = v end
     copy.live = result.live

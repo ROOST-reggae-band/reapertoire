@@ -117,4 +117,76 @@ function T.the_gate_keeps_room_tone_from_counting_as_an_instrument()
   h.assert_eq(#gated, 0, "gated out")
 end
 
+-- Programmed parts carry no level data, so presence is decided by whether a
+-- MIDI item covers the take at all.
+
+function T.a_programmed_track_is_present_where_its_items_are()
+  local frames = {}
+  for i = 1, 200 * RATE do frames[i] = false end
+  local tracks = { {
+    name = "Auto Drums", slug = "drums-auto", live = true, programmed = true,
+    frames = frames, items = { { start = 0, stop = 100 } },
+  } }
+
+  local inside = presence.instruments_in(
+    tracks, { start = 10, stop = 90 }, 0, RATE, OPTS)
+  h.assert_eq(#inside, 1)
+  h.assert_eq(inside[1], "drums-auto")
+
+  local outside = presence.instruments_in(
+    tracks, { start = 120, stop = 180 }, 0, RATE, OPTS)
+  h.assert_eq(#outside, 0, "no item covers this take")
+end
+
+function T.a_programmed_track_needs_a_real_overlap_not_a_touching_edge()
+  local frames = {}
+  for i = 1, 200 * RATE do frames[i] = false end
+  local tracks = { {
+    name = "Auto Drums", slug = "drums-auto", live = true, programmed = true,
+    frames = frames, items = { { start = 0, stop = 100 } },
+  } }
+  local touching = presence.instruments_in(
+    tracks, { start = 100, stop = 150 }, 0, RATE, OPTS)
+  h.assert_eq(#touching, 0, "an item ending exactly where the take starts")
+end
+
+-- A track with nothing to call itself
+
+function T.an_unnamed_unmapped_track_is_left_out_entirely()
+  -- REAPER reports an empty name for an unnamed track, and `slug or name`
+  -- then yielded "" -- which reached the manifest and was rejected by the
+  -- ingest API mid-run, after earlier takes were already published.
+  local tracks = {
+    { name = "", slug = nil, live = true, floor_db = -60,
+      frames = frames_at(200 * RATE, -60, -20, { { 0, 100 } }) },
+    { name = "BASS DI", slug = "bass", live = true, floor_db = -60,
+      frames = frames_at(200 * RATE, -60, -20, { { 0, 100 } }) },
+  }
+  local out = presence.instruments_in(tracks, { start = 0, stop = 100 }, 0, RATE, OPTS)
+  h.assert_eq(#out, 1)
+  h.assert_eq(out[1], "bass")
+end
+
+function T.an_unmapped_track_still_reports_under_its_own_name()
+  local tracks = { { name = "TRUMPET", slug = nil, live = true, floor_db = -60,
+    frames = frames_at(200 * RATE, -60, -20, { { 0, 100 } }) } }
+  local out = presence.instruments_in(tracks, { start = 0, stop = 100 }, 0, RATE, OPTS)
+  h.assert_eq(out[1], "TRUMPET")
+end
+
+function T.an_empty_slug_falls_back_to_the_name_rather_than_reporting_blank()
+  local tracks = { { name = "TRUMPET", slug = "", live = true, floor_db = -60,
+    frames = frames_at(200 * RATE, -60, -20, { { 0, 100 } }) } }
+  local out = presence.instruments_in(tracks, { start = 0, stop = 100 }, 0, RATE, OPTS)
+  h.assert_eq(out[1], "TRUMPET")
+end
+
+function T.a_programmed_track_with_no_name_is_left_out_too()
+  local frames = {}
+  for i = 1, 200 * RATE do frames[i] = false end
+  local tracks = { { name = "", slug = nil, live = true, programmed = true,
+    frames = frames, items = { { start = 0, stop = 100 } } } }
+  h.assert_eq(#presence.instruments_in(tracks, { start = 10, stop = 90 }, 0, RATE, OPTS), 0)
+end
+
 return T

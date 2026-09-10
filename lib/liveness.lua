@@ -22,10 +22,26 @@ end
 -- frames  dense array; each element is a dB number, or `false` where the track
 --         has no media at that position. Never nil, never 0.
 -- opts    { floor_percentile, live_margin_db, live_min_fraction }
-function M.classify(frames, opts)
+-- track   optional { programmed, has_items } -- see below
+function M.classify(frames, opts, track)
   local present = {}
   for _, v in ipairs(frames) do
     if v ~= false then present[#present + 1] = v end
+  end
+
+  -- A part played by a plugin from MIDI produces no audio until something
+  -- renders it, so there is nothing to read at the item level and every frame
+  -- is absent. Judged on frames alone such a track reads as dead and vanishes
+  -- from every take -- which is how programmed drums went missing entirely.
+  -- Having items IS the signal here: nobody writes MIDI into a track by
+  -- accident. There is no floor and no active fraction, and none is invented:
+  -- writing a stand-in dB would put a lie into the frame arrays that
+  -- everything downstream trusts.
+  if track and track.programmed and #present == 0 then
+    return {
+      live = track.has_items or false,
+      floor_db = nil, active_fraction = 0, media_frames = 0,
+    }
   end
 
   if #present == 0 then

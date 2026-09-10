@@ -82,6 +82,12 @@ function M.collect(sel_start, sel_stop, rate, track_rules)
     for i = 1, n_frames do frames[i] = false end
 
     local items = {}
+    -- Set once we have seen items and none of them held readable audio: the
+    -- track's sound comes out of a plugin fed by MIDI, so there are no peaks
+    -- to read and its frames stay entirely absent. Downstream this is the
+    -- difference between an instrument that gets counted and one that
+    -- disappears from every take -- see `liveness.classify`.
+    local audio_items, midi_items = 0, 0
     for ii = 0, reaper.CountTrackMediaItems(track) - 1 do
       local item = reaper.GetTrackMediaItem(track, ii)
       local pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
@@ -92,7 +98,9 @@ function M.collect(sel_start, sel_stop, rate, track_rules)
         items[#items + 1] = { start = item_start, stop = item_stop }
         all_items[#all_items + 1] = { start = item_start, stop = item_stop }
         local take = reaper.GetActiveTake(item)
+        if take and reaper.TakeIsMIDI(take) then midi_items = midi_items + 1 end
         if take and not reaper.TakeIsMIDI(take) then
+          audio_items = audio_items + 1
           local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
           if math.abs(playrate - 1.0) > 1e-6 then
             -- Project-time reads absorb playrate, so peak timing stays correct;
@@ -117,6 +125,9 @@ function M.collect(sel_start, sel_stop, rate, track_rules)
       name = name,
       slug = rule and rule.slug or nil,
       is_mic = rule and rule.isMic or false,
+      -- Only where every item is MIDI. A track mixing rendered audio with a
+      -- MIDI item has levels to read, and should be judged on them.
+      programmed = midi_items > 0 and audio_items == 0,
       items = items,
       frames = frames,
     }
