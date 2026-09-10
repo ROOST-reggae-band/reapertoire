@@ -67,7 +67,6 @@ end
 -- from anywhere. Refreshed here, at the one moment the copy has to be true,
 -- because the alternative was a full re-render: hours of re-encoding audio
 -- that had not changed, to correct a venue.
-local metadata_changed = false
 do
   local parsed = json.decode(manifest_raw)
   if manifest_lib.refresh_event(parsed, session) then
@@ -82,7 +81,6 @@ do
         -- intact rather than half a file, with the audio still on disk and
         -- nothing describing it.
         os.rename(tmp, manifest)
-        metadata_changed = true
         log("Refreshed the manifest from the session record.")
       else
         log("Could not update %s -- uploading it as it stands.", manifest)
@@ -93,22 +91,26 @@ do
   end
 end
 
--- Asked only when the local record actually differs from what was last sent,
--- which is the only moment the question means anything. The library ignores a
--- re-post's metadata unless told otherwise, precisely so a routine re-run
--- cannot revert a correction somebody made there -- so overwriting has to be
--- somebody saying yes, not a default.
-local update_metadata = false
-if metadata_changed then
-  local answer = reaper.MB(
-    "This rehearsal's details have changed since it was last uploaded.\n\n" ..
-    "Overwrite the library's copy with the local record?\n" ..
-    "(kind, title, date, venue and notes -- takes and audio are unaffected)\n\n" ..
-    "No uploads the audio without touching them.",
-    "Reapertoire - overwrite metadata?", 3)
-  if answer == 2 then return end       -- cancel
-  update_metadata = answer == 6        -- yes
-end
+-- Asked on every upload, not only when the manifest happened to change.
+-- Gating it on that meant the question could be answered exactly once: say No
+-- and the manifest was already refreshed, so nothing differed next time and
+-- there was no way to change your mind. It also stayed silent for a session
+-- whose details were edited before its first upload.
+--
+-- The library ignores a re-post's metadata unless told otherwise, precisely so
+-- a routine re-run cannot revert a correction somebody made there. Overwriting
+-- is therefore somebody saying yes, every time, rather than a default.
+local answer = reaper.MB(
+  string.format(
+    "Overwrite the library's details for \"%s\" with this project's record?\n\n" ..
+    "kind: %s\ndate: %s\nvenue: %s\nnotes: %s\n\n" ..
+    "No uploads the takes and audio without touching any of it.",
+    session.label or "this rehearsal",
+    session.kind or "rehearsal", (session.heldAt or ""):sub(1, 10),
+    session.venue or "(none)", session.notes or "(none)"),
+  "Reapertoire - overwrite metadata?", 3)
+if answer == 2 then return end       -- cancel
+local update_metadata = answer == 6  -- yes
 
 -- Output goes to a file the poller tails rather than down a pipe -- see
 -- `adapters/background` for why, and for the shell quoting.
