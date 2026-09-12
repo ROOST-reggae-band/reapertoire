@@ -189,4 +189,43 @@ function T.a_programmed_track_with_no_name_is_left_out_too()
   h.assert_eq(#presence.instruments_in(tracks, { start = 10, stop = 90 }, 0, RATE, OPTS), 0)
 end
 
+-- Two tracks mapped to one slug
+
+local function live(name, slug)
+  return { name = name, slug = slug, live = true, floor_db = -60,
+           frames = frames_at(200 * RATE, -60, -20, { { 0, 100 } }) }
+end
+
+function T.a_slug_is_reported_once_however_many_tracks_carry_it()
+  -- Two sax mics both matched the rule "Sax", so the take listed sax twice.
+  -- A repeat says nothing -- the entries are indistinguishable -- and the
+  -- library stores one row per instrument on a take.
+  local tracks = { live("Sax 1", "sax"), live("Sax 2", "sax"), live("BASS DI", "bass") }
+  local out = presence.instruments_in(tracks, { start = 0, stop = 100 }, 0, RATE, OPTS)
+  h.assert_eq(#out, 2)
+  h.assert_eq(out[1], "sax")
+  h.assert_eq(out[2], "bass")
+end
+
+function T.colliding_slugs_are_reported_with_the_tracks_that_caused_them()
+  -- Named, because the fix is a config rule per track and the person writing
+  -- it needs to know which tracks to write rules for.
+  local tracks = { live("Sax 1", "sax"), live("Sax 2", "sax"), live("BASS DI", "bass") }
+  local clashes = presence.slug_collisions(tracks)
+  h.assert_eq(#clashes, 1)
+  h.assert_eq(clashes[1].slug, "sax")
+  h.assert_eq(table.concat(clashes[1].names, ", "), "Sax 1, Sax 2")
+end
+
+function T.tracks_with_distinct_slugs_collide_with_nothing()
+  local tracks = { live("Sax 1", "sax-alto"), live("Sax 2", "sax-tenor") }
+  h.assert_eq(#presence.slug_collisions(tracks), 0)
+end
+
+function T.a_track_that_is_not_live_cannot_collide()
+  -- Nothing renders for it, so it is not competing for the slug.
+  local tracks = { live("Sax 1", "sax"), { name = "Sax 2", slug = "sax", live = false } }
+  h.assert_eq(#presence.slug_collisions(tracks), 0)
+end
+
 return T

@@ -264,6 +264,18 @@ if #excluded > 0 then
   log("Not rendering stems for: %s", table.concat(excluded, ", "))
 end
 
+-- Two live tracks mapped to one slug have room for one stem between them --
+-- the storage key is `stems/<slug>/` -- and `track_for_slug` above keeps
+-- whichever came last. Said out loud rather than swallowed: a second
+-- saxophone went missing from every take it played on, and nothing anywhere
+-- mentioned it.
+for _, clash in ipairs(presence.slug_collisions(classified.tracks)) do
+  log("WARNING: %s all map to \"%s\", so only %s gets a stem.",
+    table.concat(clash.names, ", "), clash.slug, clash.names[#clash.names])
+  log("         Give each its own rule in config/settings.json to keep them apart,")
+  log("         and add the new slug to the library's instrument list.")
+end
+
 local root = config.expand_path(cfg.sessionsRoot)
 local out_dir = session.outputDir or (root .. "/" .. session_lib.folder_name(session))
 session.outputDir = out_dir

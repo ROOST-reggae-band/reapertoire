@@ -33,7 +33,20 @@ end
 function M.instruments_in(tracks, span, sel_start, rate, opts)
   local i0, i1 = frames_util.range_of(span, sel_start, rate)
 
-  local out = {}
+  local out, seen = {}, {}
+
+  -- One entry per instrument, however many tracks carry it. Two sax mics both
+  -- matching the rule "Sax" listed sax twice, which says nothing -- the
+  -- entries are indistinguishable -- and the library keeps one row per
+  -- instrument on a take. `slug_collisions` is what surfaces the underlying
+  -- problem, rather than a repeat nobody can read.
+  local function add(label)
+    if label and not seen[label] then
+      seen[label] = true
+      out[#out + 1] = label
+    end
+  end
+
   for _, track in ipairs(tracks) do
     if track.live and track.programmed then
       -- No levels to threshold: a programmed part is present wherever one of
@@ -41,8 +54,7 @@ function M.instruments_in(tracks, span, sel_start, rate, opts)
       -- exactly where the next take begins does not bleed into it.
       for _, item in ipairs(track.items or {}) do
         if item.start < span.stop and span.start < item.stop then
-          local label = name_of(track)
-          if label then out[#out + 1] = label end
+          add(name_of(track))
           break
         end
       end
@@ -58,9 +70,42 @@ function M.instruments_in(tracks, span, sel_start, rate, opts)
         end
       end
       if total > 0 and active / total > opts.presence_min_fraction then
-        local label = name_of(track)
-        if label then out[#out + 1] = label end
+        add(name_of(track))
       end
+    end
+  end
+  return out
+end
+
+-- Live tracks that share a slug, with the names that caused it.
+--
+-- A slug is an instrument, and the library stores one file per instrument per
+-- take: `takes/<id>/stems/<slug>/`. Two tracks claiming one slug therefore
+-- have room for one stem between them, and the renderer kept whichever came
+-- last -- silently, which is how a second saxophone went missing from every
+-- take it played on.
+--
+-- Named rather than counted, because the fix is a mapping rule per track and
+-- whoever writes it needs to know which tracks to write rules for.
+function M.slug_collisions(tracks)
+  local order, names = {}, {}
+  for _, track in ipairs(tracks) do
+    -- Only live tracks: nothing renders for the rest, so they are not
+    -- competing for the slug.
+    if track.live and track.slug then
+      if not names[track.slug] then
+        names[track.slug] = {}
+        order[#order + 1] = track.slug
+      end
+      local list = names[track.slug]
+      list[#list + 1] = track.name or "(unnamed)"
+    end
+  end
+
+  local out = {}
+  for _, slug in ipairs(order) do
+    if #names[slug] > 1 then
+      out[#out + 1] = { slug = slug, names = names[slug] }
     end
   end
   return out
