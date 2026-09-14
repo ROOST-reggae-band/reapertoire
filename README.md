@@ -81,6 +81,8 @@ timeline** writes a pair of markers around each rehearsal, so a project holding
 a year of them shows where one stops and the next begins. Markers rather than
 regions: the region lane already carries one per take.
 
+![Editing sessions: every rehearsal in the project, with its date, label, kind and venue](docs/screenshots/sessions.png)
+
 The four **Debug:** entries are for working on Reapertoire itself, not for
 running a rehearsal.
 
