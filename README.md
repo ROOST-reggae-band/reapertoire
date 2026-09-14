@@ -522,6 +522,24 @@ from the command line against captured fixtures, and it is why threshold tuning
 is a sub-second loop rather than a click-and-squint cycle inside a DAW.
 `adapters/` is the only place REAPER is touched, and `scripts/` are thin actions.
 
+## This was vibecoded
+
+All of it. Every line here was written by an LLM, from prompts and review
+rather than from a keyboard. That is the whole provenance and you should
+factor it in.
+
+What that does not mean: it is not a toy. It cuts and renders a real band's
+rehearsals every week, the analysis core is tested from the command line
+against captured fixtures, and the recognition numbers above were measured
+rather than asserted — twice reversing what an earlier version believed.
+
+What it does mean: no human has read every line. If you point it at
+recordings you cannot replace, note that rendering **clears a take's folder
+first** and that folders no take in the manifest points at are removed. That
+behaviour is deliberate and explained under "Where things are stored", but
+read that section before the first render rather than after it, and keep a
+backup of the session audio your DAW project depends on.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
