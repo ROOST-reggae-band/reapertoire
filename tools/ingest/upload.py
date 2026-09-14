@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pushes a rendered session to a bandlib-compatible ingest API.
+"""Pushes a rendered session to a bandplate-compatible ingest API.
 
 Reads the manifest a render produced and walks the contract's three phases:
 declare the event, declare each take and receive presigned upload URLs, PUT the
@@ -47,7 +47,7 @@ EXPIRY_STATUS = 403
 # `Python-urllib/3.x`, which a CDN's bot protection blocks outright -- a bare
 # 403 carrying an HTML page and "error code: 1010", nothing to do with the
 # token or the API. Naming the tool is what any HTTP client should do anyway.
-USER_AGENT = "reapertoire (+https://github.com/ROOST-reggae-band/reapertoire)"
+USER_AGENT = "reapertoire (+https://github.com/bandplate/reapertoire)"
 
 # Server-side faults only. The contract is explicit that the ingest surface has
 # no rate limiting in v1 and never returns 429 -- "don't build retry-on-429
@@ -770,7 +770,7 @@ def main():
         warn_if_readable(args.config)
     if not token and not args.dry_run:
         print("No ingest token.\n"
-              "Issue one in the bandlib admin UI (/admin/tokens, scope "
+              "Issue one in the bandplate admin UI (/admin/tokens, scope "
               "ingest:write), then either\n"
               f'  set "token" in the ingest block of {args.config}\n'
               "  or export REAPERTOIRE_TOKEN=bpk_...", file=sys.stderr)

@@ -1,6 +1,9 @@
 # Reapertoire
 
-Finds, names and renders takes from multitrack rehearsal recordings in REAPER.
+**Finds, names and renders takes from multitrack rehearsal recordings in
+REAPER.**
+
+![Detecting takes in a rehearsal recording](docs/screenshots/detect.png)
 
 Recording a band rehearsal is easy. What is tedious is everything afterwards:
 finding where each run-through starts and stops in an hour of continuous audio,
@@ -11,6 +14,14 @@ the results with the metadata a library needs.
 It assumes nothing about your lineup. Any instrument may be absent from any
 session, including drums, and nothing depends on a particular reference track
 existing.
+
+An hour of continuous recording becomes a folder of named takes, each with a
+master, per-instrument stems, waveforms and a manifest — in a few minutes,
+most of which is REAPER rendering. From there `tools/ingest/upload.py` pushes
+the session to [**bandplate**](https://github.com/bandplate/bandplate), a
+self-hosted archive where the band can browse, play and vote on what it
+recorded. That upload is optional: the rendered folder is a complete,
+self-describing artifact on its own.
 
 ## Requirements
 
@@ -61,6 +72,8 @@ Song recognition needs its own environment:
 4. **Rebuild recognition index.** Feeds the takes you just named back in,
    so the next session arrives with suggestions. See below.
 
+![Naming takes: arrow between them, type two letters, press Enter](docs/screenshots/name.png)
+
 Two more sit in the launcher alongside those. **Edit sessions** corrects a
 rehearsal's date, label, kind, venue and notes, and deletes a session record --
 the record only; rendered audio is never touched. **Mark session spans on the
@@ -70,6 +83,8 @@ regions: the region lane already carries one per take.
 
 The four **Debug:** entries are for working on Reapertoire itself, not for
 running a rehearsal.
+
+![The launcher: every tool behind one REAPER action](docs/screenshots/launcher.png)
 
 ### Keyboard
 
@@ -395,7 +410,7 @@ manifests.
 
 ## Pushing to a library server
 
-`tools/ingest/upload.py` sends a rendered session to a bandlib-compatible
+`tools/ingest/upload.py` sends a rendered session to a bandplate-compatible
 ingest API. It needs no DAW: the manifest a render produced already holds every
 fact the API asks for.
 
@@ -427,7 +442,7 @@ uploader says so if it is not.
 chmod 600 config/settings.json
 ```
 
-Issue the token in the bandlib admin UI at `/admin/tokens` with the
+Issue the token in the bandplate admin UI at `/admin/tokens` with the
 `ingest:write` scope, and nothing else -- it is the only scope any ingest route
 checks, so a token that leaks off a laptop cannot read votes or touch members.
 
